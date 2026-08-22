@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./src/types.ts","./src/components/analytics.tsx","./src/components/clipeditor.tsx","./src/components/igmodal.tsx","./src/components/keymodal.tsx","./src/components/loop.tsx","./src/components/onboarding.tsx","./src/components/review.tsx","./src/components/studio.tsx"],"version":"5.9.3"}
