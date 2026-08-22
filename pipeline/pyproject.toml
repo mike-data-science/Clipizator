@@ -18,6 +18,7 @@ dependencies = [
     "speechbrain>=1.0",
     "torchlibrosa>=0.1.0",
     "uvicorn>=0.30",
+    "websockets",
     "whisperx",
 ]
 
