@@ -38,8 +38,7 @@ let _wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 function _ensureWs() {
   if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${proto}//${window.location.host}/ws`
+  const wsUrl = 'wss://clipizator-asducfe0f2adexcq.polandcentral-01.azurewebsites.net/ws'
   _ws = new WebSocket(wsUrl)
   _ws.onmessage = (ev) => {
     try {

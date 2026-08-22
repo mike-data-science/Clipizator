@@ -19,6 +19,7 @@ export default defineConfig({
       '/ws': {
         target: 'wss://clipizator-asducfe0f2adexcq.polandcentral-01.azurewebsites.net',
         ws: true,
+        changeOrigin: true,
       },
     },
   },
