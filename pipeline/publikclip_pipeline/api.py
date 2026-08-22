@@ -63,10 +63,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Helper to run pipeline and broadcast progress
 def run_and_broadcast(job: job_queue.Job, command: str = "run", clip: int | None = None):
+    loop = asyncio.get_running_loop()
     def emit(stage: str, fraction: float, message: str) -> None:
         asyncio.run_coroutine_threadsafe(
             manager.broadcast({"event": "progress", "stage": stage, "fraction": fraction, "message": message}),
-            asyncio.get_running_loop()
+            loop
         )
 
     def run_pipeline():
@@ -74,7 +75,7 @@ def run_and_broadcast(job: job_queue.Job, command: str = "run", clip: int | None
             if command == "run" or command == "resume":
                 asyncio.run_coroutine_threadsafe(
                     manager.broadcast({"event": "job", "job_id": job.id, "dir": str(job.dir)}),
-                    asyncio.get_running_loop()
+                    loop
                 )
                 results = job_queue.run_stages(job, _stages(), emit)
                 summary = {
@@ -86,18 +87,18 @@ def run_and_broadcast(job: job_queue.Job, command: str = "run", clip: int | None
                 }
                 asyncio.run_coroutine_threadsafe(
                     manager.broadcast({"event": "result", **summary}),
-                    asyncio.get_running_loop()
+                    loop
                 )
             elif command == "render-clip":
                 entry = rc.render_clip_edit(Path(job.dir), clip, lambda f, m: emit("render", f, m))
                 asyncio.run_coroutine_threadsafe(
                     manager.broadcast({"event": "result", "ok": True, "output": entry}),
-                    asyncio.get_running_loop()
+                    loop
                 )
         except Exception as err:
             asyncio.run_coroutine_threadsafe(
                 manager.broadcast({"event": "result", "ok": False, "error": str(err)}),
-                asyncio.get_running_loop()
+                loop
             )
 
     # Start pipeline in a background thread
