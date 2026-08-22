@@ -64,3 +64,6 @@ cookies.txt
 
 # Publikclip local home (if it gets placed inside the folder somehow)
 .publikclip/
+
+# Downloaded Binaries
+deno.exe
