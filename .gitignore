@@ -58,7 +58,6 @@ ehthumbs.db
 Thumbs.db
 
 # App specific
-cookies.txt
 .pytest_cache/
 *.log
 
