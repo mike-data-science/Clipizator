@@ -15,7 +15,7 @@ import sys
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -460,7 +460,7 @@ async def run_queue_download(body: dict):
 @app.post("/api/queue/run_transcribe")
 async def run_queue_transcribe(body: dict):
     job = _get_or_create_job_for_queue(body)
-    queue_stages = [s for s in _stages() if s.name == "asr"]
+    queue_stages = [s for s in _stages() if s.name in ("ingest", "asr")]
     
     def _run_and_upload():
         _run_pipeline_thread(job, queue_stages, source="queue")

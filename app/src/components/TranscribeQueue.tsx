@@ -9,12 +9,13 @@ interface QueueItem {
   job_id?: string
 }
 
-export function TranscribeQueue({ onSendToStudio }: { onSendToStudio: (url: string) => void }) {
+export function TranscribeQueue({ onSendToStudio: _onSendToStudio }: { onSendToStudio: (url: string) => void }) {
   const [items, setItems] = useState<QueueItem[]>([])
   const [loading, setLoading] = useState(false)
-  const [running, setRunning] = useState<Record<string, boolean>>({})
+  const [running, setRunning] = useState<Record<string, string | boolean>>({})
   const [stages, setStages] = useState<Record<string, { fraction: number; message: string }>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
+  const [failed, setFailed] = useState<Record<string, string | boolean>>({})
 
   useEffect(() => {
     loadQueue()
@@ -34,8 +35,20 @@ export function TranscribeQueue({ onSendToStudio }: { onSendToStudio: (url: stri
           }
         }))
       } else if (payload.event === 'result' && payload.job_id) {
-        setRunning(prev => ({ ...prev, [payload.job_id]: false }))
-        setCompleted(prev => ({ ...prev, [payload.job_id]: true }))
+        setRunning(prev => {
+          const next = { ...prev }
+          delete next[payload.job_id]
+          for (const [k, v] of Object.entries(next)) {
+            if (v === payload.job_id) delete next[k]
+          }
+          return next
+        })
+        if (payload.ok) {
+          setCompleted(prev => ({ ...prev, [payload.job_id]: true }))
+        } else {
+          setFailed(prev => ({ ...prev, [payload.job_id]: payload.error || true }))
+          console.error(`Job ${payload.job_id} failed:`, payload.error)
+        }
         setStages(prev => {
           const next = { ...prev }
           delete next[payload.job_id]
@@ -43,7 +56,14 @@ export function TranscribeQueue({ onSendToStudio }: { onSendToStudio: (url: stri
         })
         loadQueue() // refresh list to see if it's still pending
       } else if (payload.event === 'exited' && payload.job_id) {
-        setRunning(prev => ({ ...prev, [payload.job_id]: false }))
+        setRunning(prev => {
+          const next = { ...prev }
+          delete next[payload.job_id]
+          for (const [k, v] of Object.entries(next)) {
+            if (v === payload.job_id) delete next[k]
+          }
+          return next
+        })
       }
     }).then(un => {
       if (disposed) un()
@@ -61,7 +81,7 @@ export function TranscribeQueue({ onSendToStudio }: { onSendToStudio: (url: stri
     if (items.length === 0) return
     const currentRunning = Object.values(running).filter(Boolean).length
     if (currentRunning < 2) {
-      const pending = items.find(item => !running[item.video_url] && !completed[item.job_id || ''])
+      const pending = items.find(item => !running[item.video_url] && !completed[item.job_id || ''] && !failed[item.job_id || ''])
       if (pending) {
         handleRunItem(pending)
       }
@@ -97,9 +117,15 @@ export function TranscribeQueue({ onSendToStudio }: { onSendToStudio: (url: stri
       if (!res.ok) {
         throw new Error(res.error || 'Failed to start transcribe job')
       }
+      
+      setRunning(prev => ({ ...prev, [item.video_url]: res.job_id, [res.job_id]: true }))
     } catch (err) {
       console.error(err)
-      setRunning(prev => ({ ...prev, [item.video_url]: false }))
+      setRunning(prev => {
+        const next = { ...prev }
+        delete next[item.video_url]
+        return next
+      })
     }
   }
 
@@ -125,8 +151,9 @@ export function TranscribeQueue({ onSendToStudio }: { onSendToStudio: (url: stri
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {items.map(item => {
-            const isRunning = running[item.video_url]
-            const isCompleted = completed[item.job_id || '']
+            const isRunning = !!running[item.video_url]
+            const isCompleted = !!completed[item.job_id || '']
+            const isFailed = !!failed[item.job_id || '']
             const stage = stages[item.job_id || '']
             
             return (
@@ -155,27 +182,24 @@ export function TranscribeQueue({ onSendToStudio }: { onSendToStudio: (url: stri
                   <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: 600, borderBottom: 'none', paddingBottom: 0 }}>{item.title || item.video_url}</h3>
                   <div style={{ fontSize: '13px', color: 'var(--dim)', display: 'flex', gap: '16px' }}>
                     <span>Campaign: <strong style={{ color: 'var(--fg)' }}>{item.campaign_name}</strong></span>
-                    <span>Status: <span style={{ color: isCompleted ? '#4caf50' : (isRunning ? 'var(--primary)' : 'var(--amber)') }}>{isCompleted ? 'Transcribed' : (isRunning ? (stage?.message || 'Transcribing...') : 'Pending')}</span></span>
+                    <span>Status: <span style={{ color: isCompleted ? '#4caf50' : (isFailed ? '#f44336' : (isRunning ? 'var(--primary)' : 'var(--amber)')) }}>{isCompleted ? 'Transcribed' : (isFailed ? 'Failed' : (isRunning ? (stage?.message || 'Transcribing...') : 'Pending'))}</span></span>
                   </div>
+                  {isFailed && typeof failed[item.job_id || ''] === 'string' && (
+                    <div style={{ fontSize: '12px', color: '#f44336', marginTop: '6px', fontFamily: 'monospace' }}>
+                      {failed[item.job_id || '']}
+                    </div>
+                  )}
                 </div>
                 
                 <div style={{ minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-end' }}>
                   <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-                    <span style={{ fontSize: '12px', color: isCompleted ? '#4caf50' : (isRunning ? 'var(--primary)' : 'var(--dim)'), fontFamily: 'monospace', fontWeight: 600 }}>
-                      {isCompleted ? '100%' : isRunning && stage?.fraction !== undefined && stage.fraction >= 0 ? `${Math.floor(stage.fraction * 100)}%` : '0%'}
+                    <span style={{ fontSize: '12px', color: isCompleted ? '#4caf50' : (isFailed ? '#f44336' : (isRunning ? 'var(--primary)' : 'var(--dim)')), fontFamily: 'monospace', fontWeight: 600 }}>
+                      {isCompleted ? '100%' : isFailed ? 'Error' : isRunning && stage?.fraction !== undefined && stage.fraction >= 0 ? `${Math.floor(stage.fraction * 100)}%` : '0%'}
                     </span>
                     <div style={{ width: '100%', height: '6px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', background: isCompleted ? '#4caf50' : 'var(--primary)', width: isCompleted ? '100%' : `${isRunning ? Math.max(0, stage?.fraction || 0) * 100 : 0}%`, transition: 'width 0.3s' }} />
+                      <div style={{ height: '100%', background: isCompleted ? '#4caf50' : isFailed ? '#f44336' : 'var(--primary)', width: isCompleted || isFailed ? '100%' : `${isRunning ? Math.max(0, stage?.fraction || 0) * 100 : 0}%`, transition: 'width 0.3s' }} />
                     </div>
                   </div>
-                  {isCompleted && (
-                    <button 
-                      onClick={() => onSendToStudio(item.video_url)} 
-                      className="btn-primary"
-                    >
-                      Open in Studio →
-                    </button>
-                  )}
                 </div>
               </div>
             )
