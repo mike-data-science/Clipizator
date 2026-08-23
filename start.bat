@@ -15,7 +15,7 @@ echo.
 
 REM Start backend in background
 echo [2/3] Starting FastAPI backend on :8000...
-start "publikclip-backend" /min cmd /c "cd /d "%~dp0backend" && python run.py"
+start "publikclip-backend" cmd /k "cd /d "%~dp0backend" && python run.py"
 
 REM Install frontend deps + start
 echo [3/3] Starting React frontend on :5173...

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { JobSummary } from '../types'
 import KeyModal from './KeyModal'
 
@@ -31,15 +31,17 @@ interface Props {
   onOpenJob: (id: string) => void
   onResume: (id: string, llm?: string, geminiModel?: string, asrModel?: string) => void
   onDeleteJob: (id: string) => void
+  onUpload: (file: File, llm: string, geminiModel: string, captions: string, asrModel: string) => void
 }
 
-export default function Studio({ jobs, running, stages, error, initialSource, onRun, onOpenLoop, onOpenAnalytics, onOpenJob, onResume, onDeleteJob }: Props) {
+export default function Studio({ jobs, running, stages, error, initialSource, onRun, onOpenLoop, onOpenAnalytics, onOpenJob, onResume, onDeleteJob, onUpload }: Props) {
   const [source, setSource] = useState(initialSource || '')
   const [llm, setLlm] = useState('gemini')
   const [geminiModel, setGeminiModel] = useState('gemini-3.7-flash')
   const [captions, setCaptions] = useState('classic')
   const [asrModel, setAsrModel] = useState('large-v3-turbo')
   const [showKey, setShowKey] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const GEMINI_MODELS = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-2.5-pro']
   const ASR_MODELS = ['large-v3-turbo', 'large-v3', 'large-v2', 'medium.en', 'small.en', 'base.en', 'tiny.en']
@@ -181,6 +183,30 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
               onKeyDown={(e) => e.key === 'Enter' && source.trim() && !running && onRun(source.trim(), llm, geminiModel, captions, asrModel)}
               placeholder="YouTube URL or a path to a video file"
               disabled={running}
+            />
+            <button
+              className="btn-primary"
+              style={{ marginLeft: '10px', background: '#333' }}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={running}
+              title="Upload an MP4 directly to bypass YouTube bot block"
+            >
+              UPLOAD MP4
+            </button>
+            <input
+              type="file"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              accept="video/mp4,video/x-m4v,video/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) {
+                  onUpload(file, llm, geminiModel, captions, asrModel)
+                }
+                if (fileInputRef.current) {
+                  fileInputRef.current.value = ''
+                }
+              }}
             />
             <button
               className="btn-primary"

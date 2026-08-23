@@ -110,6 +110,23 @@ export default function App() {
     []
   )
 
+  const startUpload = useCallback(
+    async (file: File, llm: string, geminiModel: string, captions: string, asrModel: string) => {
+      setRunning(true)
+      setRunError(null)
+      setStages({})
+      setResults(null)
+      setActiveJob(null)
+      try {
+        await api.uploadVideo(file, llm, geminiModel, captions, asrModel)
+      } catch (err: any) {
+        setRunning(false)
+        setRunError(err.message || 'Upload failed')
+      }
+    },
+    []
+  )
+
   const openJob = useCallback(async (jobId: string) => {
     const r = await api.jobResults(jobId)
     setActiveJob(jobId)
@@ -185,6 +202,7 @@ export default function App() {
       error={runError}
       initialSource={prefilledSource}
       onRun={startRun}
+      onUpload={startUpload}
       onOpenLoop={() => setView('loop')}
       onOpenAnalytics={() => setView('analytics')}
       onOpenJob={openJob}

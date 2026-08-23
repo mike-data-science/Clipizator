@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -18,6 +18,41 @@ from .edits import store, visuals
 from .insights import calibration, instagram
 
 app = FastAPI(title="Publikclip API")
+
+# ---- [Omitted existing code] ----
+
+# ---- Endpoints ----
+
+@app.post("/api/jobs/upload")
+async def upload_and_run(
+    video: UploadFile = File(...),
+    llm: str = "gemini",
+    gemini_model: str | None = None,
+    captions: str = "classic",
+    asr_model: str | None = None,
+):
+    """Accept a video file upload, save to a temp location, and start a job."""
+    config.ensure_home()
+    upload_dir = config.home_dir() / "uploads"
+    upload_dir.mkdir(exist_ok=True)
+
+    dest = upload_dir / video.filename
+    with open(dest, "wb") as f:
+        content = await video.read()
+        f.write(content)
+
+    settings = config.Settings()
+    settings.llm_mode = llm
+    if gemini_model:
+        settings.gemini_model = gemini_model
+    settings.caption_preset = captions
+    if asr_model:
+        settings.asr_model = asr_model
+
+    job = job_queue.create_job("file", str(dest), json.dumps(settings.to_json()))
+    run_and_broadcast(job, command="run")
+    return {"ok": True, "job_id": job.id}
+
 
 app.add_middleware(
     CORSMiddleware,

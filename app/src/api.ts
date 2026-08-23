@@ -38,7 +38,13 @@ let _wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 function _ensureWs() {
   if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return
-  const wsUrl = 'wss://clipizator-asducfe0f2adexcq.polandcentral-01.azurewebsites.net/ws'
+  
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.host
+  // If running via Vite dev server, vite.config.ts proxies /ws
+  // If running in production, it will connect to the same origin
+  const wsUrl = `${protocol}//${host}/ws`
+  
   _ws = new WebSocket(wsUrl)
   _ws.onmessage = (ev) => {
     try {
@@ -89,6 +95,20 @@ function fileUrl(absolutePath: string): string {
 /* ---- API object ---- */
 
 export const api = {
+  uploadVideo: async (file: File, llm: string, gemini_model: string, captions: string, asr_model: string) => {
+    const formData = new FormData()
+    formData.append('video', file)
+    formData.append('llm', llm)
+    formData.append('gemini_model', gemini_model)
+    formData.append('captions', captions)
+    formData.append('asr_model', asr_model)
+    const res = await fetch(`${API}/jobs/upload`, {
+      method: 'POST',
+      body: formData,
+    })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  },
   runJob: (source: string, llm: string, gemini_model: string, captions: string, asr_model: string) =>
     post<void>('/jobs', { source, llm, gemini_model, captions, asr_model }),
   resumeJob: (jobId: string, llm?: string, gemini_model?: string, captions?: string, camera?: string, asr_model?: string) =>

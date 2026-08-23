@@ -9,15 +9,15 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'https://clipizator-asducfe0f2adexcq.polandcentral-01.azurewebsites.net',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/media': {
-        target: 'https://clipizator-asducfe0f2adexcq.polandcentral-01.azurewebsites.net',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'wss://clipizator-asducfe0f2adexcq.polandcentral-01.azurewebsites.net',
+        target: 'ws://127.0.0.1:8000',
         ws: true,
         changeOrigin: true,
       },
