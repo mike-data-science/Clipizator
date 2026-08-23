@@ -1120,3 +1120,24 @@ async def serve_media(path: str):
     }
     content_type = ct_map.get(ext, "application/octet-stream")
     return FileResponse(full, media_type=content_type)
+
+# -- Static Frontend serving for Azure --
+@app.exception_handler(404)
+async def custom_404_handler(request, exc):
+    frontend_dist = BACKEND_DIR.parent / "app" / "dist"
+    index = frontend_dist / "index.html"
+    
+    # If the user is requesting an API route that doesn't exist, return JSON 404
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+        
+    # If they are requesting a file that exists in dist, serve it
+    file_path = frontend_dist / request.url.path.lstrip("/")
+    if file_path.is_file():
+        return FileResponse(file_path)
+        
+    # Otherwise, fallback to index.html for React Router
+    if index.exists():
+        return FileResponse(index)
+        
+    return JSONResponse({"detail": "Not Found"}, status_code=404)

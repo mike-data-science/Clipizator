@@ -11,12 +11,16 @@ CONTAINER_NAME = "publikclip-videos"
 
 def main():
     conn_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-    if not conn_string:
-        print("ERROR: Please set the AZURE_STORAGE_CONNECTION_STRING environment variable.")
+    if not conn_string or conn_string == "PUT_YOUR_CONNECTION_STRING_HERE":
+        print("ERROR: Please set the AZURE_STORAGE_CONNECTION_STRING environment variable in your script!")
         return
 
     print("Connecting to Azure Blob Storage...")
-    blob_service_client = BlobServiceClient.from_connection_string(conn_string)
+    try:
+        blob_service_client = BlobServiceClient.from_connection_string(conn_string)
+    except Exception as e:
+        print(f"ERROR: Could not connect to Azure. Please check your connection string. ({e})")
+        return
 
     # Create the container if it doesn't exist
     container_client = blob_service_client.get_container_client(CONTAINER_NAME)
@@ -34,8 +38,8 @@ def main():
                 if not job_path.is_dir():
                     continue
                 
-                # Check if it has a job.json (meaning it's a valid job folder)
-                if not (job_path / "job.json").exists():
+                # Check if it has a ingest.json (meaning the download finished)
+                if not (job_path / "ingest.json").exists():
                     continue
 
                 # Check if we already uploaded it
