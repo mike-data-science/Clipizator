@@ -1,3 +1,4 @@
+# Netscape HTTP Cookie File
 .youtube.com	TRUE	/	TRUE	1787232047	GPS	1
 .youtube.com	TRUE	/	FALSE	0	PREF	f6=40000000&tz=UTC&f7=100&hl=en
 .youtube.com	TRUE	/	TRUE	0	SOCS	CAI
