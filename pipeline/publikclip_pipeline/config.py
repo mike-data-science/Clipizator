@@ -83,7 +83,7 @@ class Settings:
     llm_mode: str = "gemini"  # 'gemini' (BYO key) | 'ollama' (local fallback)
     gemini_model: str = "gemini-1.5-flash-8b"
     caption_preset: str = "classic"
-    asr_model: str = "large-v3-turbo"  # whisper model size
+    asr_model: str = "small"  # whisper model size
     # jrgillick laughter specialist: 10 ms precision but ~300k CPU forward
     # passes on an hour-plus source. OFF by default — PANNs' AudioSet
     # laughter classes cover the bus at 320 ms resolution for a fraction of
@@ -112,6 +112,6 @@ class Settings:
             llm_mode=data.get("llm_mode", "gemini"),
             gemini_model=data.get("gemini_model", "gemini-1.5-flash-8b"),
             caption_preset=data.get("caption_preset", "classic"),
-            asr_model=data.get("asr_model", "large-v3-turbo"),
+            asr_model=data.get("asr_model", "small"),
             laughter_specialist=data.get("laughter_specialist", False),
         )
