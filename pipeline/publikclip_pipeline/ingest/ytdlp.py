@@ -206,6 +206,7 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
             "-J", 
             "--no-playlist", 
             "--no-warnings",
+            "--force-ipv4",
             "--extractor-args", "youtube:player_client=android,ios,tv"
         ]
         repo_root = Path(__file__).resolve().parent.parent.parent.parent
@@ -266,6 +267,7 @@ def download(url: str, out_path: Path, progress: ProgressFn) -> None:
         "--no-playlist",
         "--no-warnings",
         "--newline",
+        "--force-ipv4",
         "--extractor-args", "youtube:player_client=android,ios,tv"
     ]
     repo_root = Path(__file__).resolve().parent.parent.parent.parent
