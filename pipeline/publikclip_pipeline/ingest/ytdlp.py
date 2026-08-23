@@ -206,11 +206,14 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
             "-J", 
             "--no-playlist", 
             "--no-warnings",
-            "--extractor-args", "youtube:player_client=android,web,ios"
+            "--extractor-args", "youtube:player_client=android,ios,tv"
         ]
-        cookies_path = Path("cookies.txt").resolve()
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        cookies_path = repo_root / "cookies.txt"
         if cookies_path.exists():
             args.extend(["--cookies", str(cookies_path)])
+        else:
+            progress(0.0, f"Warning: cookies.txt not found at {cookies_path}")
         args.append(url)
         
         def on_line(line: str) -> None:
@@ -263,11 +266,14 @@ def download(url: str, out_path: Path, progress: ProgressFn) -> None:
         "--no-playlist",
         "--no-warnings",
         "--newline",
-        "--extractor-args", "youtube:player_client=android,web,ios"
+        "--extractor-args", "youtube:player_client=android,ios,tv"
     ]
-    cookies_path = Path("cookies.txt").resolve()
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    cookies_path = repo_root / "cookies.txt"
     if cookies_path.exists():
         args.extend(["--cookies", str(cookies_path)])
+    else:
+        progress(0.0, f"Warning: cookies.txt not found at {cookies_path}")
     if ffmpeg:
         args += ["--ffmpeg-location", ffmpeg]
     args += ["-o", str(out_path), url]
