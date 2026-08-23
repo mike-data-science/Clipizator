@@ -147,7 +147,7 @@ def _read_stage(job_dir: Path, name: str):
     if not path.exists():
         return None
     try:
-        envelope = json.loads(path.read_text())
+        envelope = json.loads(path.read_text(errors="replace"))
         return envelope.get("data")
     except (json.JSONDecodeError, OSError):
         return None
@@ -163,7 +163,7 @@ def get_setup():
     has_key = False
     if secrets.exists():
         try:
-            data = json.loads(secrets.read_text())
+            data = json.loads(secrets.read_text(errors="replace"))
             has_key = bool(data.get("gemini_api_key", "").strip())
         except Exception:
             pass
@@ -188,7 +188,7 @@ async def save_gemini_key(body: dict):
     current = {}
     if path.exists():
         try:
-            current = json.loads(path.read_text())
+            current = json.loads(path.read_text(errors="replace"))
         except Exception:
             pass
     current["gemini_api_key"] = key
@@ -206,7 +206,7 @@ async def save_pexels_key(body: dict):
     current = {}
     if path.exists():
         try:
-            current = json.loads(path.read_text())
+            current = json.loads(path.read_text(errors="replace"))
         except Exception:
             pass
     current["pexels_api_key"] = key
@@ -247,7 +247,7 @@ def list_jobs():
             title = None
             if has_ingest:
                 try:
-                    d = json.loads((entry / "ingest.json").read_text())
+                    d = json.loads((entry / "ingest.json").read_text(errors="replace"))
                     title = d.get("data", {}).get("title")
                 except Exception:
                     pass
@@ -570,10 +570,10 @@ async def edit_tool(job_id: str, edit_cmd: str, body: dict | None = None):
 
     if edit_cmd == "suggest-visuals":
         from publikclip_pipeline.edits import store, visuals
-        score = json.loads((job_dir / "score.json").read_text())["data"]
+        score = json.loads((job_dir / "score.json").read_text(errors="replace"))["data"]
         clip_data = score["clips"][clip]
         edit = store.edit_for_clip(job_dir, clip, clip_data)
-        diarize = json.loads((job_dir / "diarize.json").read_text())["data"]
+        diarize = json.loads((job_dir / "diarize.json").read_text(errors="replace"))["data"]
         words = [
             {"word": w["word"], "start": w["start"] - edit.start, "end": w["end"] - edit.start}
             for seg in diarize["segments"]
@@ -635,7 +635,7 @@ async def save_clip_edits(job_id: str, body: dict):
     current = {}
     if path.exists():
         try:
-            current = json.loads(path.read_text())
+            current = json.loads(path.read_text(errors="replace"))
         except Exception:
             pass
     if isinstance(body, dict):
@@ -671,7 +671,7 @@ def ig_status():
     path = _home() / "instagram.json"
     if path.exists():
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(errors="replace"))
             return {"connected": True, "username": data.get("username")}
         except Exception:
             pass
@@ -995,7 +995,7 @@ async def analyze_campaign(campaign_id: str, request: Request):
                 from publikclip_pipeline.scoring import llm as llm_mod, rubric
                 from concurrent.futures import ThreadPoolExecutor
                 
-                candidates = json.loads(pending_file.read_text())
+                candidates = json.loads(pending_file.read_text(errors="replace"))
                 emit(0.2, f"Starting AI scoring for {len(candidates)} candidates...")
                 
                 client = llm_mod.make_client(llm, gemini_model)
