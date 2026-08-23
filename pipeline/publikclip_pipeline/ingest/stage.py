@@ -29,8 +29,20 @@ class IngestStage(Stage):
     schema_version = 1
 
     def artifacts_ok(self, ctx: StageContext, data: dict) -> bool:
-        media = Path(data.get("media_path", ""))
-        audio = ctx.job_dir / "audio16k.wav"
+        media_str = data.get("media_path", "").replace("\\", "/")
+        media = Path(media_str)
+        if not media.exists():
+            media = ctx.job_dir / Path(media_str).name
+            
+        audio_str = data.get("audio_path", "").replace("\\", "/")
+        if audio_str:
+            audio = Path(audio_str)
+        else:
+            audio = ctx.job_dir / "audio16k.wav"
+            
+        if not audio.exists():
+            audio = ctx.job_dir / Path(audio_str).name if audio_str else ctx.job_dir / "audio16k.wav"
+
         if not (media.exists() and audio.exists()):
             return False
         if data.get("source_hash"):
@@ -93,8 +105,8 @@ class IngestStage(Stage):
             source_hash = _sample_hash(media_path)
 
         return {
-            "media_path": str(media_path),
-            "audio_path": str(audio_path),
+            "media_path": media_path.name if media_path.parent == ctx.job_dir else str(media_path),
+            "audio_path": audio_path.name,
             "title": title,
             "probe": info.to_json(),
             "heatmap": heatmap,
