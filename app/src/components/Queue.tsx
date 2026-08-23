@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, listen } from '../api'
+import { listen } from '../api'
 
 interface QueueItem {
   campaign_id: string
@@ -9,7 +9,7 @@ interface QueueItem {
   job_id?: string
 }
 
-export function Queue({ onSendToStudio }: { onSendToStudio: (url: string) => void }) {
+export function Queue(_props: { onSendToStudio: (url: string) => void }) {
   const [items, setItems] = useState<QueueItem[]>([])
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState<Record<string, string | boolean>>({})

@@ -31,7 +31,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   const [expandedVideoId, setExpandedVideoId] = useState<number | null>(null)
   const [expandedClipId, setExpandedClipId] = useState<number | null>(null)
   
-  const [selectedVideoUrls, setSelectedVideoUrls] = useState<Set<string>>(new Set())
+  const [selectedVideoUrls] = useState<Set<string>>(new Set())
   const [activeTab, setActiveTab] = useState<'transcripts' | 'clips'>('transcripts')
 
   useEffect(() => {

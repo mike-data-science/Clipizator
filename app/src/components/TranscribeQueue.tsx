@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, listen } from '../api'
+import { listen } from '../api'
 
 interface QueueItem {
   campaign_id: string
