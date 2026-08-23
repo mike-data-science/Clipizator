@@ -202,7 +202,12 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
     bin_path = ensure_ytdlp(progress)
 
     def _go() -> str:
-        args = ["-J", "--no-playlist", "--no-warnings"]
+        args = [
+            "-J", 
+            "--no-playlist", 
+            "--no-warnings",
+            "--extractor-args", "youtube:player_client=android,web,ios"
+        ]
         cookies_path = Path("cookies.txt").resolve()
         if cookies_path.exists():
             args.extend(["--cookies", str(cookies_path)])
@@ -258,6 +263,7 @@ def download(url: str, out_path: Path, progress: ProgressFn) -> None:
         "--no-playlist",
         "--no-warnings",
         "--newline",
+        "--extractor-args", "youtube:player_client=android,web,ios"
     ]
     cookies_path = Path("cookies.txt").resolve()
     if cookies_path.exists():

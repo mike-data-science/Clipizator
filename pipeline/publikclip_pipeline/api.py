@@ -169,13 +169,23 @@ async def resume_job(job_id: str, req: ResumeRequest):
             settings.caption_preset = req.captions
         if req.camera:
             settings.camera.speaker_change = req.camera
-        
-        new_json = json.dumps(settings.to_json())
-        with job_queue._connect() as conn:
-            conn.execute("UPDATE jobs SET settings_json = ? WHERE id = ?", (new_json, job.id))
-        job = job_queue.get_job(job_id)
-
+        job_queue._atomic_write_json(job.dir / "settings.json", settings.to_json())
+    
     run_and_broadcast(job, command="resume")
+    return {"ok": True}
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str):
+    job = job_queue.get_job(job_id)
+    if job:
+        import shutil
+        try:
+            shutil.rmtree(job.dir)
+        except Exception:
+            pass
+        with job_queue._connect() as conn:
+            conn.execute("DELETE FROM stage_runs WHERE job_id = ?", (job_id,))
+            conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
     return {"ok": True}
 
 @app.get("/api/jobs/{job_id}/results")
