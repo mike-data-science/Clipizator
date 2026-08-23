@@ -64,7 +64,10 @@ async def websocket_endpoint(websocket: WebSocket):
 # Helper to run pipeline and broadcast progress
 def run_and_broadcast(job: job_queue.Job, command: str = "run", clip: int | None = None):
     loop = asyncio.get_running_loop()
+<<<<<<< HEAD
     
+=======
+>>>>>>> 327c3a853c367c909c6ecb5b916afd8f5a38b2e7
     def emit(stage: str, fraction: float, message: str) -> None:
         asyncio.run_coroutine_threadsafe(
             manager.broadcast({"event": "progress", "stage": stage, "fraction": fraction, "message": message}),
