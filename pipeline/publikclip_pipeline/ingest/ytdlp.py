@@ -106,6 +106,7 @@ def _run(
         [str(bin_path), *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         text=True,
         bufsize=1,
     )
@@ -205,9 +206,7 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
         args = [
             "-J", 
             "--no-playlist", 
-            "--no-warnings",
-            "--force-ipv4",
-            "--extractor-args", "youtube:player_client=android,ios,tv"
+            "--no-warnings"
         ]
         repo_root = Path(__file__).resolve().parent.parent.parent.parent
         cookies_path = repo_root / "cookies.txt"
@@ -253,23 +252,30 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
     )
 
 
-DOWNLOAD_FORMAT = "bestvideo[fps>=60]+bestaudio/bestvideo+bestaudio/best"
+DOWNLOAD_FORMAT = "bestvideo+bestaudio/best"
 
 _PCT_RE = re.compile(r"\[download\]\s+([\d.]+)%")
 
 
 def download(url: str, out_path: Path, progress: ProgressFn) -> None:
     bin_path = ensure_ytdlp(progress)
-    ffmpeg = shutil.which("ffmpeg")
+    try:
+        from ..render import ffmpeg_bin
+        if not ffmpeg_bin.supports_captions():
+            ffmpeg_bin.ensure_capable(progress)
+        ffmpeg = ffmpeg_bin.ffmpeg()
+    except Exception:
+        ffmpeg = shutil.which("ffmpeg")
     args = [
         "-f", DOWNLOAD_FORMAT,
-        "--merge-output-format", "mp4",
+        "--merge-output-format", "mkv",
+        "--write-info-json",
         "--no-playlist",
         "--no-warnings",
         "--newline",
-        "--force-ipv4",
-        "--extractor-args", "youtube:player_client=android,ios,tv"
     ]
+    if ffmpeg:
+        args.extend(["--ffmpeg-location", ffmpeg])
     repo_root = Path(__file__).resolve().parent.parent.parent.parent
     cookies_path = repo_root / "cookies.txt"
     if cookies_path.exists():

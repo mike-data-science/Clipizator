@@ -3,12 +3,10 @@ import type { JobSummary } from '../types'
 import KeyModal from './KeyModal'
 
 const STAGE_ORDER = [
-  'ingest', 'asr', 'diarize', 'events', 'candidates', 'score', 'camera', 'render'
+  'diarize', 'events', 'candidates', 'score', 'camera', 'render'
 ]
 
 const STAGE_LABELS: Record<string, string> = {
-  ingest: 'INGEST',
-  asr: 'TRANSCRIBE',
   diarize: 'SPEAKERS',
   events: 'LISTEN',
   candidates: 'SCAN',
@@ -28,13 +26,15 @@ interface Props {
   onRun: (source: string, llm: string, geminiModel: string, captions: string, asrModel: string) => void
   onOpenLoop: () => void
   onOpenAnalytics: () => void
+  onOpenQueue: () => void
+  onOpenTranscribeQueue: () => void
   onOpenJob: (id: string) => void
   onResume: (id: string, llm?: string, geminiModel?: string, asrModel?: string) => void
   onDeleteJob: (id: string) => void
   onUpload: (file: File, llm: string, geminiModel: string, captions: string, asrModel: string) => void
 }
 
-export default function Studio({ jobs, running, stages, error, initialSource, onRun, onOpenLoop, onOpenAnalytics, onOpenJob, onResume, onDeleteJob, onUpload }: Props) {
+export default function Studio({ jobs, running, stages, error, initialSource, onRun, onOpenLoop, onOpenAnalytics, onOpenQueue, onOpenTranscribeQueue, onOpenJob, onResume, onDeleteJob, onUpload }: Props) {
   const [source, setSource] = useState(initialSource || '')
   const [llm, setLlm] = useState('gemini')
   const [geminiModel, setGeminiModel] = useState('gemini-3.7-flash')
@@ -168,6 +168,12 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
           <button className="btn-ghost" onClick={onOpenAnalytics}>
             📊 campaigns
           </button>
+          <button className="btn-ghost" onClick={onOpenQueue}>
+            📥 download queue
+          </button>
+          <button className="btn-ghost" onClick={onOpenTranscribeQueue}>
+            🎙 transcribe queue
+          </button>
         </footer>
       </aside>
 
@@ -176,7 +182,8 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
           <h1 className="input-heading">
             FEED IT<span className="amber"> AN HOUR.</span>
           </h1>
-          <div className="input-row">
+          <div className="input-row" style={{ display: 'none' }}>
+            {/* The URL input is hidden. Studio is now launched from Analytics or Queue redirects */}
             <input
               value={source}
               onChange={(e) => setSource(e.target.value)}
@@ -184,38 +191,27 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
               placeholder="YouTube URL or a path to a video file"
               disabled={running}
             />
-            <button
-              className="btn-primary"
-              style={{ marginLeft: '10px', background: '#333' }}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={running}
-              title="Upload an MP4 directly to bypass YouTube bot block"
-            >
-              UPLOAD MP4
-            </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              style={{ display: 'none' }}
-              accept="video/mp4,video/x-m4v,video/*"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) {
-                  onUpload(file, llm, geminiModel, captions, asrModel)
-                }
-                if (fileInputRef.current) {
-                  fileInputRef.current.value = ''
-                }
-              }}
-            />
-            <button
-              className="btn-primary"
-              onClick={() => onRun(source.trim(), llm, geminiModel, captions, asrModel)}
-              disabled={running || !source.trim()}
-            >
-              {running ? 'WORKING' : 'CUT IT'}
-            </button>
           </div>
+          {initialSource && (
+            <div style={{ marginBottom: '24px', background: 'var(--panel)', padding: '16px 24px', borderRadius: '12px', border: '1px solid var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: '13px', color: 'var(--dim)', marginBottom: '4px' }}>Ready to Process</div>
+                <div style={{ fontWeight: 600, color: 'var(--fg)' }}>{initialSource}</div>
+              </div>
+              <button
+                className="btn-primary"
+                onClick={() => onRun(source.trim(), llm, geminiModel, captions, asrModel)}
+                disabled={running}
+              >
+                {running ? 'WORKING' : 'CUT IT'}
+              </button>
+            </div>
+          )}
+          {!initialSource && (
+            <div style={{ marginBottom: '24px', background: 'var(--panel)', padding: '24px', borderRadius: '12px', border: '1px dashed var(--border)', textAlign: 'center', color: 'var(--dim)' }}>
+              Open a video from Campaigns or the Download Queue to begin processing.
+            </div>
+          )}
           <div className="run-options">
             <div className="opt-group">
               <span className="opt-label">brain</span>

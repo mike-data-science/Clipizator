@@ -230,6 +230,8 @@ export interface CampaignVideo {
   added_at: number
   has_transcript?: number
   views?: number
+  has_ingest?: boolean
+  has_asr?: boolean
 }
 
 export interface CampaignClip {

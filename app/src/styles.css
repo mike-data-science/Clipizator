@@ -1106,8 +1106,8 @@ body {
 }
 
 .campaign-dashboard {
-  display: grid;
-  grid-template-columns: 350px 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 32px;
 }
 

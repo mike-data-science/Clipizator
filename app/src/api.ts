@@ -168,8 +168,6 @@ export const api = {
   deleteCampaignVideo: (campaignId: string, videoId: number) =>
     fetch(`${API}/campaigns/${campaignId}/videos/${videoId}`, { method: 'DELETE' }).then(r => r.json()),
     
-  fetchCampaignTranscripts: (id: string) =>
-    post<{ ok: boolean }>(`/campaigns/${id}/fetch-transcripts`, {}),
   getCampaignTranscripts: (id: string, q?: string) => {
     const params = new URLSearchParams()
     if (q) params.set('q', q)

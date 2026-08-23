@@ -45,6 +45,7 @@ except ImportError:
     pass
 
 from publikclip_pipeline import config  # noqa: E402
+# Force reload to pick up ytdlp.py changes
 from publikclip_pipeline.jobs import queue  # noqa: E402
 
 # ---- app setup -------------------------------------------------------------
@@ -286,7 +287,7 @@ def job_results(job_id: str):
     }
 
 
-def _run_pipeline_thread(job: queue.Job) -> None:
+def _run_pipeline_thread(job: queue.Job, stages_to_run: list | None = None, source: str = "studio") -> None:
     """Run the pipeline in a background thread, broadcasting progress via WS."""
     def emit(stage: str, fraction: float, message: str) -> None:
         _broadcast_sync({
@@ -295,17 +296,19 @@ def _run_pipeline_thread(job: queue.Job) -> None:
             "stage": stage,
             "fraction": fraction,
             "message": message,
+            "source": source,
         })
 
-    _broadcast_sync({"event": "job", "job_id": job.id, "dir": str(job.dir)})
+    _broadcast_sync({"event": "job", "job_id": job.id, "dir": str(job.dir), "source": source})
     try:
-        results = queue.run_stages(job, _stages(), emit)
+        results = queue.run_stages(job, stages_to_run or _stages(), emit)
         summary = {
             "event": "result",
             "ok": True,
             "job_id": job.id,
             "stages": list(results.keys()),
             "title": results.get("ingest", {}).get("title"),
+            "source": source,
         }
         _broadcast_sync(summary)
     except Exception as err:
@@ -339,7 +342,148 @@ async def run_job(body: dict):
         settings.asr_model = asr_model
 
     job = queue.create_job(source_type, source, json.dumps(settings.to_json()))
-    threading.Thread(target=_run_pipeline_thread, args=(job,), daemon=True).start()
+    
+    # Studio pipeline skips ingest and asr stages because they are handled by the Queue
+    studio_stages = [s for s in _stages() if s.name not in ("ingest", "asr")]
+    threading.Thread(target=_run_pipeline_thread, args=(job, studio_stages), daemon=True).start()
+    
+    # Wait for the file to be ingested before returning the job ID
+    # (The shell used to do this synchronously too)
+    while True:
+        if (job.dir / "ingest.json").exists() or (job.dir / "asr.json").exists() or (job.dir / "diarize.json").exists():
+            break
+        import time
+        time.sleep(0.1)
+
+    return {"ok": True, "job_id": job.id}
+
+
+# -- Queue --
+
+@app.get("/api/queue/pending_download")
+def get_queue_pending_download():
+    from publikclip_pipeline.campaigns import store
+    videos = []
+    for c in store.list_campaigns():
+        cvs = store.campaign_videos(c["id"])
+        for cv in cvs:
+            # Check if job exists and has ingest
+            has_ingest = False
+            if cv.get("job_id"):
+                job_dir = _home() / "jobs" / cv["job_id"]
+                if job_dir.exists() and (job_dir / "ingest.json").exists():
+                    has_ingest = True
+            
+            if not has_ingest:
+                videos.append({
+                    "campaign_id": c["id"],
+                    "campaign_name": c["name"],
+                    "video_url": cv.get("video_url"),
+                    "title": cv.get("title"),
+                    "job_id": cv.get("job_id"),
+                })
+    return videos
+
+@app.get("/api/queue/pending_transcribe")
+def get_queue_pending_transcribe():
+    from publikclip_pipeline.campaigns import store
+    videos = []
+    for c in store.list_campaigns():
+        cvs = store.campaign_videos(c["id"])
+        for cv in cvs:
+            # Check if job exists, has ingest, but NO asr
+            has_ingest = False
+            has_asr = False
+            if cv.get("job_id"):
+                job_dir = _home() / "jobs" / cv["job_id"]
+                if job_dir.exists():
+                    if (job_dir / "ingest.json").exists():
+                        has_ingest = True
+                    if (job_dir / "asr.json").exists():
+                        has_asr = True
+            
+            if has_ingest and not has_asr:
+                videos.append({
+                    "campaign_id": c["id"],
+                    "campaign_name": c["name"],
+                    "video_url": cv.get("video_url"),
+                    "title": cv.get("title"),
+                    "job_id": cv.get("job_id"),
+                })
+    return videos
+
+
+def _get_or_create_job_for_queue(body: dict):
+    from publikclip_pipeline.campaigns import store
+    video_url = body.get("video_url")
+    campaign_id = body.get("campaign_id")
+    if not video_url:
+        raise HTTPException(400, "video_url is required")
+        
+    settings = config.Settings()
+    
+    # Do we have an existing job for this video?
+    job_id = None
+    if campaign_id:
+        cvs = store.campaign_videos(campaign_id)
+        for cv in cvs:
+            if cv["video_url"] == video_url:
+                job_id = cv.get("job_id")
+                break
+                
+    if job_id:
+        job = queue.get_job(job_id)
+        if not job:
+            job = queue.create_job("url", video_url, json.dumps(settings.to_json()))
+    else:
+        job = queue.create_job("url", video_url, json.dumps(settings.to_json()))
+        if campaign_id:
+            # Update the video record with the new job_id
+            with store._connect() as conn:
+                conn.execute(
+                    "UPDATE campaign_videos SET job_id = ? WHERE campaign_id = ? AND video_url = ?",
+                    (job.id, campaign_id, video_url)
+                )
+    return job
+
+@app.post("/api/queue/run_download")
+async def run_queue_download(body: dict):
+    job = _get_or_create_job_for_queue(body)
+    queue_stages = [s for s in _stages() if s.name == "ingest"]
+    
+    def _run_download():
+        _run_pipeline_thread(job, queue_stages, source="queue")
+        
+    threading.Thread(target=_run_download, daemon=True).start()
+    return {"ok": True, "job_id": job.id}
+
+@app.post("/api/queue/run_transcribe")
+async def run_queue_transcribe(body: dict):
+    job = _get_or_create_job_for_queue(body)
+    queue_stages = [s for s in _stages() if s.name == "asr"]
+    
+    def _run_and_upload():
+        _run_pipeline_thread(job, queue_stages, source="queue")
+        # Azure cloud sync
+        azure_url = os.environ.get("AZURE_SYNC_URL")
+        if azure_url:
+            try:
+                import requests
+                print(f"Syncing {job.id} to Azure...")
+                mp4_path = job.dir / "video.mp4"
+                asr_path = job.dir / "asr.json"
+                files = {}
+                if mp4_path.exists():
+                    files["video"] = open(mp4_path, "rb")
+                if asr_path.exists():
+                    files["transcript"] = open(asr_path, "rb")
+                if files:
+                    requests.post(azure_url, files=files, data={"job_id": job.id})
+                    print(f"Synced {job.id} to Azure successfully.")
+            except Exception as e:
+                print(f"Failed to sync {job.id} to Azure: {e}")
+        
+    threading.Thread(target=_run_and_upload, daemon=True).start()
     return {"ok": True, "job_id": job.id}
 
 
@@ -619,6 +763,22 @@ def get_campaign(campaign_id: str):
     c = store.get_campaign(campaign_id)
     if not c:
         raise HTTPException(404, "campaign not found")
+        
+    # Check local job status for videos
+    for v in c.get("videos", []):
+        job_id = v.get("job_id")
+        has_ingest = False
+        has_asr = False
+        if job_id:
+            job_dir = _home() / "jobs" / job_id
+            if job_dir.exists():
+                if (job_dir / "ingest.json").exists():
+                    has_ingest = True
+                if (job_dir / "asr.json").exists():
+                    has_asr = True
+        v["has_ingest"] = has_ingest
+        v["has_asr"] = has_asr
+        
     # Include moments too
     c["moments"] = store.campaign_moments(campaign_id, limit=100)
     return c
@@ -661,39 +821,6 @@ def add_campaign_video(campaign_id: str, body: dict):
 def delete_campaign_video(campaign_id: str, video_id: int):
     from publikclip_pipeline.campaigns import store
     store.remove_video(campaign_id, video_id)
-    return {"ok": True}
-
-@app.post("/api/campaigns/{campaign_id}/fetch-transcripts")
-def fetch_campaign_transcripts(campaign_id: str):
-    from publikclip_pipeline.campaigns import store, transcripts
-    def _do_fetch():
-        def emit(fraction: float, message: str):
-            _broadcast_sync({
-                "event": "progress",
-                "stage": "transcripts",
-                "campaign_id": campaign_id,
-                "fraction": fraction,
-                "message": message,
-            })
-        try:
-            res = transcripts.fetch_all_for_campaign(campaign_id, emit)
-            _broadcast_sync({
-                "event": "result",
-                "ok": True,
-                "stage": "transcripts",
-                "campaign_id": campaign_id,
-                "fetched": res["fetched"],
-                "errors": res["errors"],
-            })
-        except Exception as err:
-            _broadcast_sync({
-                "event": "result",
-                "ok": False,
-                "stage": "transcripts",
-                "campaign_id": campaign_id,
-                "error": str(err),
-            })
-    threading.Thread(target=_do_fetch, daemon=True).start()
     return {"ok": True}
 
 @app.get("/api/campaigns/{campaign_id}/transcripts")

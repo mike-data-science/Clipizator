@@ -9,7 +9,11 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   const [loading, setLoading] = useState(false)
   
   // Create state
+  const [showAddModal, setShowAddModal] = useState(false)
   const [newName, setNewName] = useState('')
+  const [newReward, setNewReward] = useState('')
+  const [newRules, setNewRules] = useState('')
+  const [newVideos, setNewVideos] = useState('')
   
   const [newVideoUrl, setNewVideoUrl] = useState('')
   
@@ -112,12 +116,29 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
     e.preventDefault()
     if (!newName.trim()) return
     try {
-      const c = await api.createCampaign(newName.trim())
+      setLoading(true)
+      const c = await api.createCampaign(newName.trim(), newReward.trim(), newRules.trim())
+      
+      // If videos were provided, add them immediately
+      if (newVideos.trim()) {
+        const urls = newVideos.split(/[\s,]+/).filter(url => url.trim().length > 0)
+        if (urls.length > 0) {
+          await Promise.all(urls.map(url => api.addCampaignVideo(c.id, url.trim())))
+        }
+      }
+      
       setNewName('')
+      setNewReward('')
+      setNewRules('')
+      setNewVideos('')
+      setShowAddModal(false)
+      
       await loadCampaigns()
       setActiveId(c.id)
     } catch (err) {
       console.error(err)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -135,9 +156,6 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
       await Promise.all(urls.map(url => api.addCampaignVideo(activeId, url.trim())))
       setNewVideoUrl('')
       
-      // Automatically trigger transcript extraction
-      api.fetchCampaignTranscripts(activeId).catch(console.error)
-      
       await loadCampaign(activeId)
     } catch (err) {
       console.error('Error adding videos:', err)
@@ -147,14 +165,14 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   }
 
   async function runAnalysis() {
-    if (!activeId) return
-    if (selectedVideoUrls.size === 0) {
-      alert("Please select at least one video to analyze.")
+    if (!activeId || !campaign || campaign.videos.length === 0) {
+      alert("No videos available to analyze.")
       return
     }
     try {
       setActiveTab('clips')
-      await api.analyzeCampaign(activeId, { video_urls: Array.from(selectedVideoUrls) })
+      const allUrls = campaign.videos.map(v => v.video_url)
+      await api.analyzeCampaign(activeId, { video_urls: allUrls })
       setTimeout(() => loadCampaign(activeId), 5000)
     } catch (err) {
       console.error(err)
@@ -192,43 +210,202 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
 
   if (!activeId || !campaign) {
     return (
-      <div className="analytics-layout">
-        <div className="campaign-sidebar">
-          <button onClick={onBack} className="btn-back">← Back to Studio</button>
-          <h3>Campaigns</h3>
-          <form onSubmit={handleCreate} className="campaign-form">
-            <input 
-              value={newName} 
-              onChange={e => setNewName(e.target.value)} 
-              placeholder="New campaign name..." 
-            />
-            <button type="submit">+</button>
-          </form>
+      <div className="analytics-layout" style={{ flexDirection: 'column', background: 'var(--bg)' }}>
+        {/* Top Header */}
+        <header style={{ padding: '24px 40px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--panel)', zIndex: 10 }}>
+          <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 700, letterSpacing: '-0.5px' }}>Campaigns</h1>
+          <button 
+            onClick={onBack} 
+            style={{ padding: '8px 16px', background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', fontWeight: 600, transition: 'all 0.2s' }}
+            onMouseOver={e => e.currentTarget.style.background = 'var(--border)'}
+            onMouseOut={e => e.currentTarget.style.background = 'var(--bg)'}
+          >
+            → Open Studio
+          </button>
+        </header>
+
+        {/* Dashboard Grid */}
+        <div style={{ flex: 1, padding: '40px', overflowY: 'auto' }}>
           
-          <ul className="campaign-list">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+            {/* Add New Campaign Card (Button) */}
+            <div 
+              onClick={() => setShowAddModal(true)}
+              style={{
+                background: 'rgba(255, 170, 0, 0.05)',
+                border: '2px dashed rgba(255, 170, 0, 0.3)',
+                borderRadius: '16px',
+                padding: '32px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '16px',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                minHeight: '200px'
+              }}
+              onMouseOver={e => {
+                e.currentTarget.style.background = 'rgba(255, 170, 0, 0.1)';
+                e.currentTarget.style.borderColor = 'rgba(255, 170, 0, 0.6)';
+                e.currentTarget.style.transform = 'translateY(-4px)';
+              }}
+              onMouseOut={e => {
+                e.currentTarget.style.background = 'rgba(255, 170, 0, 0.05)';
+                e.currentTarget.style.borderColor = 'rgba(255, 170, 0, 0.3)';
+                e.currentTarget.style.transform = 'none';
+              }}
+            >
+              <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--primary)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 300 }}>+</div>
+              <div style={{ fontWeight: 600, fontSize: '16px', color: 'var(--primary)' }}>Create Campaign</div>
+            </div>
+
+            {/* Campaign Cards */}
             {campaigns.map(c => (
-              <li key={c.id} onClick={() => setActiveId(c.id)}>
-                <strong>{c.name}</strong>
-                <span>{c.video_count || 0} vids, {c.clip_count || 0} clips</span>
-              </li>
+              <div 
+                key={c.id} 
+                onClick={() => setActiveId(c.id)}
+                style={{
+                  background: 'var(--panel)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '16px',
+                  padding: '24px',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  minHeight: '200px',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
+                }}
+                onMouseOver={e => {
+                  e.currentTarget.style.transform = 'translateY(-4px)';
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                }}
+                onMouseOut={e => {
+                  e.currentTarget.style.transform = 'none';
+                  e.currentTarget.style.borderColor = 'var(--border)';
+                }}
+              >
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '4px', background: 'linear-gradient(90deg, var(--primary), #ff6b6b)' }} />
+                <h3 style={{ fontSize: '20px', marginBottom: '8px', fontWeight: 600 }}>{c.name}</h3>
+                
+                <div style={{ display: 'flex', gap: '16px', marginTop: 'auto', paddingTop: '20px', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '24px', fontWeight: 700, color: 'var(--fg)' }}>{c.video_count || 0}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Videos</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '24px', fontWeight: 700, color: 'var(--primary)' }}>{c.clip_count || 0}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Clips</span>
+                  </div>
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
         </div>
-        <div className="campaign-content empty">
-          <p>Select or create a campaign to view analytics.</p>
-        </div>
+
+        {/* Glassmorphic Add Modal */}
+        {showAddModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div style={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '24px', padding: '40px', width: '100%', maxWidth: '500px', boxShadow: '0 24px 48px rgba(0,0,0,0.4)', position: 'relative' }}>
+              <button 
+                onClick={() => setShowAddModal(false)}
+                style={{ position: 'absolute', top: '24px', right: '24px', background: 'transparent', border: 'none', color: 'var(--dim)', fontSize: '24px', cursor: 'pointer' }}
+              >×</button>
+              
+              <h2 style={{ fontSize: '24px', marginBottom: '8px', fontWeight: 700 }}>New Campaign</h2>
+              <p style={{ color: 'var(--dim)', fontSize: '14px', marginBottom: '32px' }}>Set up a new pipeline to extract and analyze clips.</p>
+              
+              <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--fg)' }}>Campaign Name</label>
+                  <input 
+                    value={newName} 
+                    onChange={e => setNewName(e.target.value)} 
+                    placeholder="e.g. Summer Outreach" 
+                    style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontSize: '14px' }}
+                    required
+                  />
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--fg)' }}>Reward / Budget</label>
+                  <input 
+                    value={newReward} 
+                    onChange={e => setNewReward(e.target.value)} 
+                    placeholder="e.g. $500 per approved clip" 
+                    style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontSize: '14px' }}
+                  />
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--fg)' }}>Campaign Rules</label>
+                  <textarea 
+                    value={newRules} 
+                    onChange={e => setNewRules(e.target.value)} 
+                    placeholder="Provide specific guidelines, do's and don'ts..." 
+                    style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontSize: '14px', minHeight: '80px', resize: 'vertical' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--fg)' }}>Source Videos (Optional)</label>
+                  <textarea 
+                    value={newVideos} 
+                    onChange={e => setNewVideos(e.target.value)} 
+                    placeholder="Paste YouTube URLs here (separated by spaces or newlines)..." 
+                    style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontSize: '14px', minHeight: '80px', resize: 'vertical' }}
+                  />
+                </div>
+                
+                <button 
+                  type="submit" 
+                  disabled={loading}
+                  style={{ 
+                    marginTop: '12px', padding: '16px', borderRadius: '12px', background: 'var(--primary)', color: '#000', fontSize: '15px', fontWeight: 600, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1, transition: 'all 0.2s' 
+                  }}
+                >
+                  {loading ? 'Creating...' : 'Create Campaign'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
 
   return (
     <div className="analytics-layout">
-      <div className="campaign-sidebar">
-        <button onClick={onBack} className="btn-back">← Back to Studio</button>
-        <h3>Campaigns</h3>
-        <button onClick={() => setActiveId(null)} className="btn-back" style={{ marginTop: '16px' }}>
-          ← Back to list
+      <div className="campaign-sidebar" style={{ width: '240px', padding: '24px 16px' }}>
+        <button onClick={() => setActiveId(null)} className="btn-back" style={{ marginBottom: '24px', width: '100%', justifyContent: 'center' }}>
+          ← Back to Dashboard
         </button>
+        <h3 style={{ paddingLeft: '8px', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--dim)' }}>Other Campaigns</h3>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto' }}>
+          {campaigns.map(c => (
+            <div 
+              key={c.id} 
+              onClick={() => setActiveId(c.id)}
+              style={{
+                padding: '10px 12px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                background: c.id === activeId ? 'rgba(255, 170, 0, 0.1)' : 'transparent',
+                color: c.id === activeId ? 'var(--primary)' : 'var(--fg)',
+                fontWeight: c.id === activeId ? 600 : 400,
+                transition: 'background 0.2s'
+              }}
+              onMouseOver={e => { if (c.id !== activeId) e.currentTarget.style.background = 'var(--bg)' }}
+              onMouseOut={e => { if (c.id !== activeId) e.currentTarget.style.background = 'transparent' }}
+            >
+              {c.name}
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="campaign-content">
@@ -291,46 +468,125 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
         <div className="campaign-dashboard">
           {activeTab === 'transcripts' && (
             <>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                {campaign.rules && (
-                  <section className="dashboard-card" style={{ margin: 0 }}>
-                    <h3>Campaign Rules</h3>
-                    <p style={{ whiteSpace: 'pre-wrap', color: 'var(--dim)', fontSize: '13px', margin: 0 }}>
-                      {campaign.rules}
-                    </p>
-                  </section>
-                )}
+              {expandedVideoId !== null ? (
+                (() => {
+                  const activeVideo = campaign.videos.find(v => v.id === expandedVideoId)
+                  if (!activeVideo) return null
+                  const vTranscriptObj = transcripts.find((t: any) => t.video_url === activeVideo.video_url)
+                  const getYoutubeId = (url: string) => {
+                    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?]+)/);
+                    return match ? match[1] : null;
+                  };
+                  const ytid = getYoutubeId(activeVideo.video_url);
 
-                <section className="dashboard-card" style={{ margin: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3>Source Videos ({campaign.videos.length})</h3>
-                    {campaign.videos.length > 0 && (
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                       <button 
-                        onClick={() => {
-                          if (selectedVideoUrls.size === campaign.videos.length) {
-                            setSelectedVideoUrls(new Set())
-                          } else {
-                            setSelectedVideoUrls(new Set(campaign.videos.map(v => v.video_url)))
-                          }
-                        }}
-                        style={{ fontSize: '12px', background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer' }}
+                        onClick={() => setExpandedVideoId(null)}
+                        style={{ alignSelf: 'flex-start', background: 'transparent', border: 'none', color: 'var(--dim)', fontSize: '14px', cursor: 'pointer', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}
                       >
-                        {selectedVideoUrls.size === campaign.videos.length ? 'Deselect All' : 'Select All'}
+                        <span style={{ fontSize: '18px' }}>←</span> Back to Videos
                       </button>
-                    )}
-                  </div>
-                  <form onSubmit={handleAddVideo} className="add-video-form">
-                    <textarea 
-                      value={newVideoUrl} 
-                      onChange={e => setNewVideoUrl(e.target.value)} 
-                      placeholder="Paste YouTube URLs here (separated by spaces or newlines)..." 
-                      rows={3}
-                    />
-                    <button type="submit">Add</button>
-                  </form>
-                  <ul className="video-list" style={{ padding: 0, margin: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: 'calc(100vh - 300px)', overflowY: 'auto', paddingRight: '8px' }}>
+                      
+                      <div className="dashboard-card" style={{ padding: '32px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+                        <div style={{ display: 'flex', gap: '32px', marginBottom: '32px' }}>
+                          <div style={{ width: '320px', flexShrink: 0, aspectRatio: '16/9', background: '#000', borderRadius: '16px', overflow: 'hidden', position: 'relative', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+                            {ytid ? (
+                              <img src={`https://img.youtube.com/vi/${ytid}/maxresdefault.jpg`} onError={(e) => { e.currentTarget.src = `https://img.youtube.com/vi/${ytid}/mqdefault.jpg`; }} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="thumbnail" />
+                            ) : (
+                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: 'var(--dim)' }}>No thumb</div>
+                            )}
+                            {activeVideo.duration_sec && (
+                              <div style={{ position: 'absolute', bottom: '12px', right: '12px', background: 'rgba(0,0,0,0.8)', color: '#fff', padding: '4px 8px', borderRadius: '6px', fontSize: '13px', fontWeight: 600 }}>
+                                {Math.floor(activeVideo.duration_sec / 60)}:{(activeVideo.duration_sec % 60).toString().padStart(2, '0')}
+                              </div>
+                            )}
+                          </div>
+                          
+                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                            <h2 style={{ fontSize: '28px', marginBottom: '12px', fontWeight: 700, lineHeight: '1.3' }}>{activeVideo.title || 'Video Transcript'}</h2>
+                            <div style={{ fontSize: '15px', color: 'var(--dim)', marginBottom: '24px', display: 'flex', gap: '12px', alignItems: 'center' }}>
+                              <span style={{ fontWeight: 500, color: '#fff' }}>{activeVideo.channel || 'Unknown channel'}</span>
+                              <span>&bull;</span>
+                              <span>
+                                {activeVideo.views !== undefined ? (
+                                  activeVideo.views >= 1000000 
+                                    ? (activeVideo.views / 1000000).toFixed(1) + 'M views' 
+                                    : activeVideo.views >= 1000 
+                                      ? (activeVideo.views / 1000).toFixed(1) + 'K views' 
+                                      : activeVideo.views + ' views'
+                                ) : 'N/A views'}
+                              </span>
+                            </div>
+                            
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                              <div style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', color: (activeVideo.has_ingest && activeVideo.has_asr) ? '#4caf50' : 'var(--amber)', background: 'var(--bg)', padding: '6px 16px', borderRadius: '20px', border: '1px solid var(--border)' }}>
+                                <span>●</span> {(activeVideo.has_ingest && activeVideo.has_asr) ? 'Ready' : (activeVideo.has_ingest ? 'Pending Transcribe' : 'Pending Download')}
+                              </div>
+                              {onSendToStudio && (
+                                <button
+                                  onClick={() => onSendToStudio(activeVideo.video_url)}
+                                  disabled={!(activeVideo.has_ingest && activeVideo.has_asr)}
+                                  style={{ padding: '8px 24px', fontSize: '14px', borderRadius: '20px', background: (activeVideo.has_ingest && activeVideo.has_asr) ? 'var(--amber)' : '#333', color: (activeVideo.has_ingest && activeVideo.has_asr) ? '#000' : '#888', border: 'none', cursor: (activeVideo.has_ingest && activeVideo.has_asr) ? 'pointer' : 'not-allowed', fontWeight: 600, transition: 'all 0.2s' }}
+                                >
+                                  Open in Studio →
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', padding: '32px', borderRadius: '16px', border: '1px solid var(--border)' }}>
+                          {vTranscriptObj ? (
+                            <div style={{ fontSize: '16px', lineHeight: '1.8', color: 'var(--dim)' }}>
+                              {vTranscriptObj.transcript.map((seg: any, i: number) => (
+                                <span key={i} title={`[${seg.start}s - ${seg.end}s]`}>{seg.text} </span>
+                              ))}
+                            </div>
+                          ) : (activeVideo.has_ingest && activeVideo.has_asr) ? (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: '15px', color: 'var(--dim)' }}>Loading transcript text...</div>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '12px' }}>
+                              <div style={{ fontSize: '16px', color: 'var(--dim)' }}>This video is not fully processed yet.</div>
+                              <div style={{ fontSize: '13px', color: 'var(--dim)', opacity: 0.7 }}>Check the Queues to download and transcribe it.</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()
+              ) : (
+                <>
+                  {/* Campaign Rules Section */}
+                  {campaign.rules && (
+                    <section className="dashboard-card" style={{ marginBottom: '24px' }}>
+                      <h3>Campaign Rules</h3>
+                      <p style={{ whiteSpace: 'pre-wrap', color: 'var(--dim)', fontSize: '13px', margin: 0 }}>
+                        {campaign.rules}
+                      </p>
+                    </section>
+                  )}
+
+                  {/* Add Videos Section */}
+                  <section className="dashboard-card" style={{ marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3 style={{ margin: 0 }}>Source Videos ({campaign.videos.length})</h3>
+                    </div>
+                    <form onSubmit={handleAddVideo} style={{ display: 'flex', gap: '12px' }}>
+                      <input 
+                        value={newVideoUrl} 
+                        onChange={e => setNewVideoUrl(e.target.value)} 
+                        placeholder="Paste YouTube URLs here (separated by spaces or commas)..." 
+                        style={{ flex: 1, padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontSize: '14px' }}
+                      />
+                      <button type="submit" style={{ padding: '0 24px', borderRadius: '12px', background: 'var(--primary)', color: '#000', fontSize: '14px', fontWeight: 600, border: 'none', cursor: 'pointer', transition: 'all 0.2s' }}>Add</button>
+                    </form>
+                  </section>
+
+                  {/* Videos Grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px' }}>
                     {campaign.videos.map(v => {
-                      const isExpanded = expandedVideoId === v.id
                       const isSelected = selectedVideoUrls.has(v.video_url)
                       
                       const getYoutubeId = (url: string) => {
@@ -338,136 +594,91 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
                         return match ? match[1] : null;
                       };
                       const ytid = getYoutubeId(v.video_url);
-
+                      
                       return (
-                      <li 
-                        key={v.id} 
-                        style={{ 
-                          border: isExpanded ? '1px solid var(--primary)' : '1px solid var(--border)', 
-                          borderRadius: '12px', 
-                          padding: '12px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '12px',
-                          background: isExpanded ? 'rgba(255, 170, 0, 0.05)' : 'var(--panel)',
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-                          transition: 'all 0.2s ease',
-                          marginBottom: '8px',
-                          flexShrink: 0
-                        }}
-                      >
-                        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                          <input 
-                            type="checkbox" 
-                            checked={isSelected}
-                            onChange={(e) => {
-                              const newSet = new Set(selectedVideoUrls)
-                              if (e.target.checked) newSet.add(v.video_url)
-                              else newSet.delete(v.video_url)
-                              setSelectedVideoUrls(newSet)
-                            }}
-                            style={{ marginTop: '4px', cursor: 'pointer' }}
-                          />
-                          <div 
-                            style={{ flex: 1, cursor: 'pointer', display: 'flex', gap: '12px', minWidth: 0 }}
-                            onClick={() => setExpandedVideoId(isExpanded ? null : v.id)}
-                          >
-                            <div style={{ width: '120px', flexShrink: 0, aspectRatio: '16/9', background: '#000', borderRadius: '4px', overflow: 'hidden', position: 'relative' }}>
-                              {ytid ? (
-                                <img src={`https://img.youtube.com/vi/${ytid}/mqdefault.jpg`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="thumbnail" />
-                              ) : (
-                                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: 'var(--dim)' }}>No thumb</div>
-                              )}
-                              {v.duration_sec && (
-                                <div style={{ position: 'absolute', bottom: '4px', right: '4px', background: 'rgba(0,0,0,0.8)', color: '#fff', padding: '2px 4px', borderRadius: '4px', fontSize: '10px', fontWeight: 600 }}>
-                                  {Math.floor(v.duration_sec / 60)}:{(v.duration_sec % 60).toString().padStart(2, '0')}
-                                </div>
-                              )}
-                            </div>
+                        <div 
+                          key={v.id}
+                          onClick={() => setExpandedVideoId(v.id)}
+                          style={{
+                            background: 'var(--panel)',
+                            border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border)',
+                            borderRadius: '16px',
+                            overflow: 'hidden',
+                            cursor: 'pointer',
+                            transition: 'all 0.3s ease',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            boxShadow: isSelected ? '0 0 0 1px var(--primary)' : '0 4px 12px rgba(0,0,0,0.1)'
+                          }}
+                          onMouseOver={e => {
+                            e.currentTarget.style.transform = 'translateY(-4px)';
+                            if (!isSelected) e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                          }}
+                          onMouseOut={e => {
+                            e.currentTarget.style.transform = 'none';
+                            if (!isSelected) e.currentTarget.style.borderColor = 'var(--border)';
+                          }}
+                        >
+                          {/* Thumbnail Header */}
+                          <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#000' }}>
+                            {ytid ? (
+                              <img src={`https://img.youtube.com/vi/${ytid}/mqdefault.jpg`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="thumbnail" />
+                            ) : (
+                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: 'var(--dim)' }}>No thumb</div>
+                            )}
                             
-                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                              <div style={{ fontWeight: 600, fontSize: '14px', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{v.title || v.video_url}</div>
-                              <div style={{ fontSize: '12px', color: 'var(--dim)', marginTop: '4px', display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>{v.channel || 'Unknown channel'}</span>
-                                <span>
-                                  {v.views !== undefined ? (
-                                    v.views >= 1000000 
-                                      ? (v.views / 1000000).toFixed(1) + 'M views' 
-                                      : v.views >= 1000 
-                                        ? (v.views / 1000).toFixed(1) + 'K views' 
-                                        : v.views + ' views'
-                                  ) : 'N/A views'}
-                                </span>
+                            {/* Duration overlay */}
+                            {v.duration_sec && (
+                              <div style={{ position: 'absolute', bottom: '8px', right: '8px', background: 'rgba(0,0,0,0.8)', color: '#fff', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 600 }}>
+                                {Math.floor(v.duration_sec / 60)}:{(v.duration_sec % 60).toString().padStart(2, '0')}
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '8px' }}>
-                                <div style={{ fontSize: '11px', color: 'var(--dim)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  {v.has_transcript ? (
-                                    <><span style={{ color: '#4caf50' }}>●</span> Transcript ready</>
-                                  ) : (
-                                    <><span style={{ color: 'var(--primary)' }}>●</span> Extracting...</>
-                                  )}
-                                </div>
-                                {onSendToStudio && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      onSendToStudio(v.video_url)
-                                    }}
-                                    style={{
-                                      fontSize: '11px',
-                                      padding: '2px 8px',
-                                      background: 'var(--border)',
-                                      color: 'var(--fg)',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      cursor: 'pointer'
-                                    }}
-                                  >
-                                    Open in Studio
-                                  </button>
-                                )}
-                              </div>
-                            </div>
+                            )}
                           </div>
                           
-                          {/* We don't have handleDeleteVideo so we omit it, but if it was there we should put it back. Let's just omit for now, user didn't ask to preserve it strictly but wait, there was no handleDeleteVideo originally? Ah there was! But it's missing in my new code block. */}
-                        </div>
-                      </li>
-                    )})}
-                  </ul>
-                </section>
-              </div>
-
-              <div style={{ minWidth: 0 }}>
-                <section className="dashboard-card" style={{ margin: 0, height: 'calc(100vh - 200px)', minHeight: '400px', display: 'flex', flexDirection: 'column' }}>
-                  <h3 style={{ marginBottom: '16px' }}>Transcript Text</h3>
-                  {(() => {
-                    if (!expandedVideoId) {
-                      return <p className="empty-state" style={{ margin: 'auto' }}>Select a video on the left to view its transcript.</p>
-                    }
-                    const activeVideo = campaign.videos.find(v => v.id === expandedVideoId)
-                    if (!activeVideo) return null
-                    
-                    const vTranscriptObj = transcripts.find((t: any) => t.video_url === activeVideo.video_url)
-                    
-                    if (vTranscriptObj) {
-                      return (
-                        <div className="video-transcript" style={{ flex: 1, fontSize: '13px', lineHeight: '1.6', color: 'var(--dim)', overflowY: 'auto', background: 'var(--bg)', padding: '20px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                          {vTranscriptObj.transcript.map((seg: any, i: number) => (
-                            <span key={i} title={`[${seg.start}s - ${seg.end}s]`}>{seg.text} </span>
-                          ))}
+                          {/* Card Content */}
+                          <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+                            <h3 style={{ fontSize: '16px', marginBottom: '8px', lineHeight: '1.4', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                              {v.title || v.video_url}
+                            </h3>
+                            
+                            <div style={{ fontSize: '13px', color: 'var(--dim)', marginBottom: '16px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }}>{v.channel || 'Unknown'}</span>
+                              <span>&bull;</span>
+                              <span>
+                                {v.views !== undefined ? (
+                                  v.views >= 1000000 
+                                    ? (v.views / 1000000).toFixed(1) + 'M views' 
+                                    : v.views >= 1000 
+                                      ? (v.views / 1000).toFixed(1) + 'K views' 
+                                      : v.views + ' views'
+                                ) : 'N/A views'}
+                              </span>
+                            </div>
+                            
+                            <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', color: (v.has_ingest && v.has_asr) ? '#4caf50' : 'var(--amber)' }}>
+                                <span>●</span> {(v.has_ingest && v.has_asr) ? 'Ready' : (v.has_ingest ? 'Pending Transcribe' : 'Pending Download')}
+                              </div>
+                              
+                              {onSendToStudio && (v.has_ingest && v.has_asr) && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onSendToStudio(v.video_url)
+                                  }}
+                                  style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '16px', background: 'var(--amber)', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                  Open Studio
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       )
-                    }
-                    
-                    if (activeVideo.has_transcript) {
-                      return <div style={{ margin: 'auto', fontSize: '13px', color: 'var(--dim)' }}>Loading transcript text...</div>
-                    }
-                    
-                    return <p className="empty-state" style={{ margin: 'auto' }}>This video does not have a transcript yet.</p>
-                  })()}
-                </section>
-              </div>
+                    })}
+                  </div>
+                </>
+              )}
             </>
           )}
 

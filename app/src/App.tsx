@@ -6,9 +6,11 @@ import Studio from './components/Studio'
 import Review from './components/Review'
 import Loop from './components/Loop'
 import { Analytics } from './components/Analytics'
+import { Queue } from './components/Queue'
+import { TranscribeQueue } from './components/TranscribeQueue'
 import './styles.css'
 
-type View = 'boot' | 'onboarding' | 'studio' | 'review' | 'loop' | 'analytics'
+type View = 'boot' | 'onboarding' | 'studio' | 'review' | 'loop' | 'analytics' | 'queue' | 'transcribe_queue'
 
 export default function App() {
   const [view, setView] = useState<View>('boot')
@@ -33,7 +35,7 @@ export default function App() {
     api.setupState()
       .then((s) => {
         setSetup(s)
-        setView(s.onboarded ? 'studio' : 'onboarding')
+        setView(s.onboarded ? 'analytics' : 'onboarding')
       })
       .catch((err) => {
         console.error('Failed to connect to backend:', err)
@@ -59,7 +61,10 @@ export default function App() {
 
   useEffect(() => {
     let disposed = false
-    listen<PipelineEvent>('pipeline-event', ({ payload }) => {
+    listen<PipelineEvent>('pipeline-event', ({ payload }: any) => {
+      // Background queue jobs shouldn't hijack the Studio UI
+      if (payload.source === 'queue') return
+
       if (payload.event === 'job' && payload.job_id) {
         setActiveJob(payload.job_id)
         setResults(null)
@@ -155,7 +160,7 @@ export default function App() {
         onDone={() => {
           api.markOnboarded()
           setSetup({ ...setup, onboarded: true })
-          setView('studio')
+          setView('analytics')
         }}
       />
     )
@@ -168,6 +173,24 @@ export default function App() {
   if (view === 'analytics') {
     return <Analytics 
       onBack={() => setView('studio')} 
+      onSendToStudio={(url) => {
+        setPrefilledSource(url)
+        setView('studio')
+      }}
+    />
+  }
+
+  if (view === 'queue') {
+    return <Queue
+      onSendToStudio={(url) => {
+        setPrefilledSource(url)
+        setView('studio')
+      }}
+    />
+  }
+
+  if (view === 'transcribe_queue') {
+    return <TranscribeQueue
       onSendToStudio={(url) => {
         setPrefilledSource(url)
         setView('studio')
@@ -205,6 +228,8 @@ export default function App() {
       onUpload={startUpload}
       onOpenLoop={() => setView('loop')}
       onOpenAnalytics={() => setView('analytics')}
+      onOpenQueue={() => setView('queue')}
+      onOpenTranscribeQueue={() => setView('transcribe_queue')}
       onOpenJob={openJob}
       onResume={(id, llm, geminiModel, asrModel) => {
         setRunning(true)

@@ -1,7 +1,7 @@
 """Ingest stage: URL or file → job-dir media + analysis audio + heatmap.
 
 Artifacts produced in the job dir:
-    media.mp4      (URL jobs; file jobs keep the source path unless normalized)
+    media.mkv      (URL jobs; file jobs keep the source path unless normalized)
     audio16k.wav   16 kHz mono analysis audio (shared by all M1 models)
     heatmap in the checkpoint data (YouTube most-replayed, when available)
 """
@@ -52,9 +52,10 @@ class IngestStage(Stage):
             meta = ytdlp.fetch_meta(job.source, prog)
             heatmap = meta.heatmap
             title = meta.title
-            media_path = ctx.job_dir / "media.mp4"
-            if not media_path.exists():
-                ytdlp.download(job.source, media_path, prog)
+            media_path = ctx.job_dir / "media.mkv"
+            if media_path.exists():
+                media_path.unlink()
+            ytdlp.download(job.source, media_path, prog)
         else:
             media_path = Path(job.source).expanduser().resolve()
             if not media_path.exists():

@@ -247,6 +247,7 @@ class Stage:
 
 def run_stages(job: Job, stages: Iterable[Stage], progress: ProgressFn) -> dict[str, dict]:
     """Run stages in order, skipping fresh checkpoints. Returns stage→data."""
+    job.dir.mkdir(parents=True, exist_ok=True)
     settings = config.Settings.from_json(json.loads(job.settings_json))
     ctx = StageContext(job=job, settings=settings, progress=progress)
     results: dict[str, dict] = {}
