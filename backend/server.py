@@ -302,6 +302,23 @@ def _run_pipeline_thread(job: queue.Job, stages_to_run: list | None = None, sour
     _broadcast_sync({"event": "job", "job_id": job.id, "dir": str(job.dir), "source": source})
     try:
         results = queue.run_stages(job, stages_to_run or _stages(), emit)
+        
+        # Save transcript to DB if ASR ran
+        if "asr" in results and "ingest" in results:
+            try:
+                from publikclip_pipeline.campaigns import store
+                video_url = results["ingest"].get("url") or job.source
+                store.store_transcript(
+                    video_url=video_url,
+                    campaign_id=None,
+                    title=results["ingest"].get("title"),
+                    channel=results["ingest"].get("channel"),
+                    duration_sec=results["ingest"].get("duration"),
+                    transcript=results["asr"].get("segments", []),
+                    word_count=results["asr"].get("word_count", 0)
+                )
+            except Exception as e:
+                print("Failed to save transcript to DB:", e)
         summary = {
             "event": "result",
             "ok": True,

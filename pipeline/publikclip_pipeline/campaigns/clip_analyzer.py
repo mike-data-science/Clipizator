@@ -163,7 +163,7 @@ def _transcribe_clip(video_path: Path, progress: ProgressFn) -> list[dict]:
         compute_type = "float16"
 
     progress(0.4, "Transcribing audio…")
-    model = whisperx.load_model("small", device, compute_type=compute_type)
+    model = whisperx.load_model("large-v3-turbo", device, compute_type=compute_type)
     audio = whisperx.load_audio(str(video_path))
     result = model.transcribe(audio)
 
@@ -174,6 +174,13 @@ def _transcribe_clip(video_path: Path, progress: ProgressFn) -> list[dict]:
     aligned = whisperx.align(
         result["segments"], align_model, metadata, audio, device
     )
+
+    del model
+    del align_model
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # Flatten to word list
     words = []

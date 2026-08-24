@@ -51,7 +51,7 @@ class _ProgressStdWrapper:
         if match:
             pct = int(float(match.group(1)))
             if pct != self.last_pct:
-                self.ctx.emit(pct, f"Transcribing ({pct}%)…")
+                self.ctx.emit(pct / 100.0, f"Transcribing ({pct}%)…")
                 self.last_pct = pct
 
     def flush(self):
@@ -81,10 +81,15 @@ class AsrStage(Stage):
         import whisperx
 
         device = "cpu"  # ctranslate2 has no MPS backend; int8 CPU is the local path
+        compute_type = COMPUTE_TYPE
+        if torch.cuda.is_available():
+            device = "cuda"
+            compute_type = "float16"
+
         t0 = time.monotonic()
         asr_model_name = getattr(ctx.settings, "asr_model", ASR_MODEL)
         model = whisperx.load_model(
-            asr_model_name, device, compute_type=COMPUTE_TYPE, vad_method="silero", language="en"
+            asr_model_name, device, compute_type=compute_type, vad_method="silero", language="en"
         )
         audio = whisperx.load_audio(str(audio_path))
         duration = float(len(audio)) / 16000.0
@@ -152,7 +157,7 @@ class AsrStage(Stage):
         return {
             "language": language,
             "model": ASR_MODEL,
-            "compute_type": COMPUTE_TYPE,
+            "compute_type": compute_type,
             "segments": segments,
             "word_count": word_count,
             "benchmark": {

@@ -509,22 +509,27 @@ def get_transcript(video_url: str) -> list[dict] | None:
 def campaign_transcripts(campaign_id: str) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM yt_transcripts WHERE campaign_id = ?"
-            " ORDER BY fetched_at DESC",
+            "SELECT yt.* FROM yt_transcripts yt "
+            "JOIN campaign_videos cv ON yt.video_url = cv.video_url "
+            "WHERE cv.campaign_id = ? "
+            "ORDER BY yt.fetched_at DESC",
             (campaign_id,),
         ).fetchall()
-    return [
-        {
+    res = []
+    for r in rows:
+        transcript = json.loads(r["transcript_json"])
+        for seg in transcript:
+            seg.pop("words", None)
+        res.append({
             "video_url": r["video_url"],
             "title": r["title"],
             "channel": r["channel"],
             "duration_sec": r["duration_sec"],
             "word_count": r["word_count"],
             "fetched_at": r["fetched_at"],
-            "transcript": json.loads(r["transcript_json"]),
-        }
-        for r in rows
-    ]
+            "transcript": transcript,
+        })
+    return res
 
 
 def search_transcripts(campaign_id: str, query: str) -> list[dict]:
