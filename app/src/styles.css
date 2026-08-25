@@ -42,6 +42,11 @@
   --display: 'Archivo Black', sans-serif;
   --body: 'Public Sans', sans-serif;
   --mono: 'Martian Mono', monospace;
+  
+  /* Glassmorphism settings */
+  --glass-bg: rgba(22, 23, 27, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-blur: blur(24px);
 }
 
 html, body, #root { height: 100%; }
@@ -57,6 +62,14 @@ body {
 
 .mono { font-family: var(--mono); font-weight: 500; }
 .amber { color: var(--amber); }
+
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
 
 /* film grain over everything, very quiet */
 .grain {

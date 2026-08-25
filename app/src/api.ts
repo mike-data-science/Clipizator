@@ -181,8 +181,8 @@ export const api = {
   deleteCampaignClip: (campaignId: string, clipId: number) =>
     fetch(`${API}/campaigns/${campaignId}/clips/${clipId}`, { method: 'DELETE' }).then(r => r.json()),
     
-  analyzeClip: (id: string, url: string, role: 'mine' | 'competitor' = 'competitor') =>
-    post<{ ok: boolean; message: string }>(`/campaigns/${id}/clips/analyze`, { url, role }),
+  analyzeClip: (id: string, url: string, role: 'mine' | 'competitor' = 'competitor', settings?: { download: boolean; transcribe: boolean; analyze: boolean }) =>
+    post<{ ok: boolean; message: string }>(`/campaigns/${id}/clips/analyze`, { url, role, settings }),
     
   importAnalyticsCsv: (id: string, file: File) => {
     return file.text().then(text => 
@@ -205,6 +205,18 @@ export const api = {
     get<unknown[]>(`/campaigns/${id}/hooks`),
   getCampaignInsights: (id: string) =>
     get<{ feature_weights: Record<string, number> }>(`/campaigns/${id}/insights`),
+    
+  // Analyzer
+  getVideoRanking: (id: string) =>
+    get<Array<{ video_url: string; clip_potential: number; total_score: number }>>(`/campaigns/${id}/analyzer/video-ranking`),
+  getHookRecommendations: (id: string) =>
+    get<{ recommendation: string; visual_score: number; audio_score: number }>(`/campaigns/${id}/analyzer/hook-recommendations`),
+  getCompetitorMatches: (campaignId: string, videoUrl: string) =>
+    get<Array<{ clip_url: string; competitor_text: string; visual_hook: string; matched_in_video: string; start_sec: number; end_sec: number; confidence: number }>>(`/campaigns/${campaignId}/competitor-matches?video_url=${encodeURIComponent(videoUrl)}`),
+  improveHook: (campaignId: string, matched_transcript: string, competitor_visual_hook: string) =>
+    post<{ visual_hooks: string[], audio_hooks: string[] }>(`/campaigns/${campaignId}/analyzer/improve-hook`, { matched_transcript, competitor_visual_hook }),
+  searchHashtag: (campaignId: string, hashtag: string) =>
+    post<{ ok: boolean, message: string }>(`/campaigns/${campaignId}/hashtag-search`, { hashtag }),
 
   deleteJob: (jobId: string) =>
     fetch(`/api/jobs/${jobId}`, { method: 'DELETE' }).then(r => r.json()),

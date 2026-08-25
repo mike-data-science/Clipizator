@@ -13,13 +13,20 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   const [newName, setNewName] = useState('')
   const [newReward, setNewReward] = useState('')
   const [newRules, setNewRules] = useState('')
-  const [newVideos, setNewVideos] = useState('')
+  // Unified Add Media state
+  const [showAddMediaModal, setShowAddMediaModal] = useState(false)
+  const [addMediaType, setAddMediaType] = useState<'source' | 'mine' | 'competitor' | 'hashtag'>('source')
+  const [addMediaUrls, setAddMediaUrls] = useState('')
+  const [addMediaHashtag, setAddMediaHashtag] = useState('')
+  const [addMediaSettings, setAddMediaSettings] = useState({
+    download: true,
+    transcribe: true,
+    analyze: true
+  })
+  const [selectedClip, setSelectedClip] = useState<any>(null)
   
-  const [newVideoUrl, setNewVideoUrl] = useState('')
-  
-  // Clip state
-  const [newClipUrl, setNewClipUrl] = useState('')
-  const [clipRole, setClipRole] = useState<'mine' | 'competitor'>('competitor')
+  // Video filter state
+  const [videoFilter, setVideoFilter] = useState<'all' | 'source' | 'mine' | 'competitor'>('all')
   const [csvUploading, setCsvUploading] = useState(false)
   
   // Extraction progress state
@@ -31,8 +38,21 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   const [expandedVideoId, setExpandedVideoId] = useState<number | null>(null)
   const [expandedClipId, setExpandedClipId] = useState<number | null>(null)
   
+  // Analyzer AI state
+  const [videoRanking, setVideoRanking] = useState<any[]>([])
+  const [hookRecs, setHookRecs] = useState<any>(null)
+  const [selectedMatchVideo, setSelectedMatchVideo] = useState<any>(null)
+  const [competitorMatches, setCompetitorMatches] = useState<any[]>([])
+  const [improvingHookFor, setImprovingHookFor] = useState<number | null>(null)
+  const [improvedHooks, setImprovedHooks] = useState<Record<number, { visual_hooks: string[], audio_hooks: string[] }>>({})
+  
+  // Social Hub state
+  const [igData, setIgData] = useState<{ connected: boolean, username?: string, error?: string, clips?: any[] }>({ connected: false })
+  const [igAppId, setIgAppId] = useState('')
+  const [igAppSecret, setIgAppSecret] = useState('')
+
   const [selectedVideoUrls] = useState<Set<string>>(new Set())
-  const [activeTab, setActiveTab] = useState<'transcripts' | 'clips'>('transcripts')
+  const [activeTab, setActiveTab] = useState<'overview' | 'videos' | 'social'>('overview')
 
   useEffect(() => {
     loadCampaigns()
@@ -71,8 +91,13 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
               setClipAnalysisMsg(payload.message)
             } else if (payload.event === 'result') {
               setClipAnalysisMsg(null)
+              if (!payload.ok) {
+                alert("Error analyzing clip: " + payload.error)
+              }
               loadCampaign(activeId)
             }
+          } else if (payload.stage === 'clip_analysis_started') {
+            loadCampaign(activeId)
           }
         }
       }).then(un => {
@@ -104,9 +129,69 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
       
       // Fetch transcripts in the background for displaying them
       api.getCampaignTranscripts(id).then(setTranscripts).catch(console.error)
+      // Fetch analyzer data
+      api.getVideoRanking(id).then(setVideoRanking).catch(console.error)
+      api.getHookRecommendations(id).then(setHookRecs).catch(console.error)
       
     } catch (err) {
       console.error('Failed to load campaign:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function loadCompetitorMatches(videoUrl: string) {
+    if (!activeId) return
+    setLoading(true)
+    try {
+      const data = await api.getCompetitorMatches(activeId, videoUrl)
+      setCompetitorMatches(data)
+      const v = campaign?.videos.find(x => x.video_url === videoUrl)
+      setSelectedMatchVideo(v)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleImproveHook(matchIndex: number, transcript: string, visualHook: string) {
+    if (!activeId) return
+    setImprovingHookFor(matchIndex)
+    try {
+      const res = await api.improveHook(activeId, transcript, visualHook || '')
+      setImprovedHooks(prev => ({ ...prev, [matchIndex]: res }))
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setImprovingHookFor(null)
+    }
+  }
+
+  async function loadIgOverview() {
+    try {
+      const data = await api.igOverview()
+      setIgData(data)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab === 'social') {
+      loadIgOverview()
+    }
+  }, [activeTab])
+
+  async function handleIgConnect(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      await api.igConnect(igAppId, igAppSecret)
+      await loadIgOverview()
+    } catch (err) {
+      console.error(err)
+      alert("Failed to connect Instagram")
     } finally {
       setLoading(false)
     }
@@ -142,51 +227,36 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
     }
   }
 
-  async function handleAddVideo(e: React.FormEvent) {
+  async function handleAddMediaSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!newVideoUrl.trim() || !activeId) return
+    if (!addMediaUrls.trim() || !activeId) return
     
-    // Split by commas, spaces, or newlines to allow multiple links
-    const urls = newVideoUrl.split(/[\s,]+/).filter(url => url.trim().length > 0)
+    const urls = addMediaUrls.split(/[\s,]+/).filter(url => url.trim().length > 0)
     if (urls.length === 0) return
 
     try {
       setLoading(true)
-      // Add all videos in parallel
-      await Promise.all(urls.map(url => api.addCampaignVideo(activeId, url.trim())))
-      setNewVideoUrl('')
       
+      if (addMediaType === 'hashtag') {
+        const hashtag = addMediaHashtag.startsWith('#') ? addMediaHashtag : `#${addMediaHashtag}`
+        await api.searchHashtag(activeId, hashtag)
+        alert(`Started background search for ${hashtag}. Clips will appear in the Videos tab soon!`)
+      } else if (addMediaType === 'source') {
+        await Promise.all(urls.map(url => api.addCampaignVideo(activeId, url.trim())))
+      } else {
+        // Clips
+        await Promise.all(urls.map(url => api.analyzeClip(activeId, url.trim(), addMediaType, addMediaSettings)))
+      }
+      
+      setAddMediaUrls('')
+      setAddMediaHashtag('')
+      setShowAddMediaModal(false)
       await loadCampaign(activeId)
     } catch (err) {
-      console.error('Error adding videos:', err)
+      console.error('Error adding media:', err)
+      alert("Failed to add media.")
     } finally {
       setLoading(false)
-    }
-  }
-
-  async function runAnalysis() {
-    if (!activeId || !campaign || campaign.videos.length === 0) {
-      alert("No videos available to analyze.")
-      return
-    }
-    try {
-      setActiveTab('clips')
-      const allUrls = campaign.videos.map(v => v.video_url)
-      await api.analyzeCampaign(activeId, { video_urls: allUrls })
-      setTimeout(() => loadCampaign(activeId), 5000)
-    } catch (err) {
-      console.error(err)
-    }
-  }
-
-  async function handleAddClip(e: React.FormEvent) {
-    e.preventDefault()
-    if (!newClipUrl.trim() || !activeId) return
-    try {
-      await api.analyzeClip(activeId, newClipUrl, clipRole)
-      setNewClipUrl('')
-    } catch (err) {
-      console.error(err)
     }
   }
 
@@ -408,12 +478,9 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
         </div>
       </div>
 
-      <div className="campaign-content">
-        <header className="campaign-header">
-          <h2>{campaign.name}</h2>
-          <div className="campaign-actions">
-            <button onClick={runAnalysis} className="btn-primary">Run Analysis</button>
-          </div>
+      <div className="campaign-content" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+        <header className="campaign-header" style={{ padding: '24px 32px', borderBottom: '1px solid var(--border)', background: 'var(--panel)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ fontSize: '24px', fontWeight: 700, margin: 0 }}>{campaign.name}</h2>
         </header>
         
         {loading && <div className="loading">Loading campaign data...</div>}
@@ -450,328 +517,649 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
           </section>
         )}
 
-        <div className="tabs" style={{ display: 'flex', gap: '16px', marginBottom: '24px', borderBottom: '1px solid var(--border)' }}>
+        <div className="tabs" style={{ display: 'flex', gap: '24px', padding: '0 32px', borderBottom: '1px solid var(--border)', background: 'var(--panel)' }}>
           <button 
-            style={{ padding: '8px 16px', background: 'none', border: 'none', borderBottom: activeTab === 'transcripts' ? '2px solid var(--primary)' : '2px solid transparent', color: activeTab === 'transcripts' ? 'var(--fg)' : 'var(--dim)', cursor: 'pointer', fontWeight: 600 }} 
-            onClick={() => setActiveTab('transcripts')}
+            style={{ padding: '16px 4px', background: 'none', border: 'none', borderBottom: activeTab === 'overview' ? '2px solid var(--amber)' : '2px solid transparent', color: activeTab === 'overview' ? 'var(--amber)' : 'var(--dim)', cursor: 'pointer', fontWeight: 600, fontSize: '14px', transition: 'all 0.2s' }} 
+            onClick={() => setActiveTab('overview')}
           >
-            Transcripts & Rules
+            Overview
           </button>
           <button 
-            style={{ padding: '8px 16px', background: 'none', border: 'none', borderBottom: activeTab === 'clips' ? '2px solid var(--primary)' : '2px solid transparent', color: activeTab === 'clips' ? 'var(--fg)' : 'var(--dim)', cursor: 'pointer', fontWeight: 600 }} 
-            onClick={() => setActiveTab('clips')}
+            style={{ padding: '16px 4px', background: 'none', border: 'none', borderBottom: activeTab === 'videos' ? '2px solid var(--amber)' : '2px solid transparent', color: activeTab === 'videos' ? 'var(--amber)' : 'var(--dim)', cursor: 'pointer', fontWeight: 600, fontSize: '14px', transition: 'all 0.2s' }} 
+            onClick={() => setActiveTab('videos')}
           >
-            Clips & Analysis
+            Videos
+          </button>
+          <button 
+            style={{ padding: '16px 4px', background: 'none', border: 'none', borderBottom: activeTab === 'social' ? '2px solid var(--amber)' : '2px solid transparent', color: activeTab === 'social' ? 'var(--amber)' : 'var(--dim)', cursor: 'pointer', fontWeight: 600, fontSize: '14px', transition: 'all 0.2s' }} 
+            onClick={() => setActiveTab('social')}
+          >
+            Social Hub
           </button>
         </div>
 
-        <div className="campaign-dashboard">
-          {activeTab === 'transcripts' && (
-            <>
-              {expandedVideoId !== null ? (
-                (() => {
-                  const activeVideo = campaign.videos.find(v => v.id === expandedVideoId)
-                  if (!activeVideo) return null
-                  const vTranscriptObj = transcripts.find((t: any) => t.video_url === activeVideo.video_url)
-                  const getYoutubeId = (url: string) => {
-                    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?]+)/);
-                    return match ? match[1] : null;
-                  };
-                  const ytid = getYoutubeId(activeVideo.video_url);
-
-                  return (
-                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                      <button 
-                        onClick={() => setExpandedVideoId(null)}
-                        style={{ alignSelf: 'flex-start', background: 'transparent', border: 'none', color: 'var(--dim)', fontSize: '14px', cursor: 'pointer', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}
-                      >
-                        <span style={{ fontSize: '18px' }}>←</span> Back to Videos
-                      </button>
-                      
-                      <div className="dashboard-card" style={{ padding: '32px', display: 'flex', flexDirection: 'column', flex: 1 }}>
-                        <div style={{ display: 'flex', gap: '32px', marginBottom: '32px' }}>
-                          <div style={{ width: '320px', flexShrink: 0, aspectRatio: '16/9', background: '#000', borderRadius: '16px', overflow: 'hidden', position: 'relative', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
-                            {ytid ? (
-                              <img src={`https://img.youtube.com/vi/${ytid}/maxresdefault.jpg`} onError={(e) => { e.currentTarget.src = `https://img.youtube.com/vi/${ytid}/mqdefault.jpg`; }} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="thumbnail" />
-                            ) : (
-                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: 'var(--dim)' }}>No thumb</div>
-                            )}
-                            {activeVideo.duration_sec && (
-                              <div style={{ position: 'absolute', bottom: '12px', right: '12px', background: 'rgba(0,0,0,0.8)', color: '#fff', padding: '4px 8px', borderRadius: '6px', fontSize: '13px', fontWeight: 600 }}>
-                                {Math.floor(activeVideo.duration_sec / 60)}:{(activeVideo.duration_sec % 60).toString().padStart(2, '0')}
-                              </div>
-                            )}
-                          </div>
-                          
-                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                            <h2 style={{ fontSize: '28px', marginBottom: '12px', fontWeight: 700, lineHeight: '1.3' }}>{activeVideo.title || 'Video Transcript'}</h2>
-                            <div style={{ fontSize: '15px', color: 'var(--dim)', marginBottom: '24px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-                              <span style={{ fontWeight: 500, color: '#fff' }}>{activeVideo.channel || 'Unknown channel'}</span>
-                              <span>&bull;</span>
-                              <span>
-                                {activeVideo.views !== undefined ? (
-                                  activeVideo.views >= 1000000 
-                                    ? (activeVideo.views / 1000000).toFixed(1) + 'M views' 
-                                    : activeVideo.views >= 1000 
-                                      ? (activeVideo.views / 1000).toFixed(1) + 'K views' 
-                                      : activeVideo.views + ' views'
-                                ) : 'N/A views'}
-                              </span>
-                            </div>
-                            
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                              <div style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', color: (activeVideo.has_ingest && activeVideo.has_asr) ? '#4caf50' : 'var(--amber)', background: 'var(--bg)', padding: '6px 16px', borderRadius: '20px', border: '1px solid var(--border)' }}>
-                                <span>●</span> {(activeVideo.has_ingest && activeVideo.has_asr) ? 'Ready' : (activeVideo.has_ingest ? 'Pending Transcribe' : 'Pending Download')}
-                              </div>
-                              {onSendToStudio && (
-                                <button
-                                  onClick={() => onSendToStudio(activeVideo.video_url)}
-                                  disabled={!(activeVideo.has_ingest && activeVideo.has_asr)}
-                                  style={{ padding: '8px 24px', fontSize: '14px', borderRadius: '20px', background: (activeVideo.has_ingest && activeVideo.has_asr) ? 'var(--amber)' : '#333', color: (activeVideo.has_ingest && activeVideo.has_asr) ? '#000' : '#888', border: 'none', cursor: (activeVideo.has_ingest && activeVideo.has_asr) ? 'pointer' : 'not-allowed', fontWeight: 600, transition: 'all 0.2s' }}
-                                >
-                                  Open in Studio →
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        
-                        <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', padding: '32px', borderRadius: '16px', border: '1px solid var(--border)' }}>
-                          {vTranscriptObj ? (
-                            <div style={{ fontSize: '16px', lineHeight: '1.8', color: 'var(--dim)' }}>
-                              {vTranscriptObj.transcript.map((seg: any, i: number) => (
-                                <span key={i} title={`[${seg.start}s - ${seg.end}s]`}>{seg.text} </span>
-                              ))}
-                            </div>
-                          ) : (activeVideo.has_ingest && activeVideo.has_asr) ? (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: '15px', color: 'var(--dim)' }}>Loading transcript text...</div>
-                          ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '12px' }}>
-                              <div style={{ fontSize: '16px', color: 'var(--dim)' }}>This video is not fully processed yet.</div>
-                              <div style={{ fontSize: '13px', color: 'var(--dim)', opacity: 0.7 }}>Check the Queues to download and transcribe it.</div>
-                            </div>
-                          )}
-                        </div>
+        <div className="campaign-dashboard" style={{ flex: 1, overflowY: 'auto', padding: '32px' }}>
+          {activeTab === 'overview' && (
+            <div style={{ display: 'grid', gap: '32px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                <section className="glass-panel" style={{ padding: '24px', borderRadius: '16px' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', color: 'var(--text)' }}>Campaign Info</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {campaign.description && (
+                      <div>
+                        <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '4px' }}>Reward / Budget</div>
+                        <div style={{ fontSize: '16px', fontWeight: 500, color: 'var(--green)' }}>{campaign.description}</div>
+                      </div>
+                    )}
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '4px' }}>Rules</div>
+                      <div style={{ fontSize: '14px', color: 'var(--text)', whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                        {campaign.rules || 'No rules specified.'}
                       </div>
                     </div>
-                  )
-                })()
-              ) : (
-                <>
-                  {/* Campaign Rules Section */}
-                  {campaign.rules && (
-                    <section className="dashboard-card" style={{ marginBottom: '24px' }}>
-                      <h3>Campaign Rules</h3>
-                      <p style={{ whiteSpace: 'pre-wrap', color: 'var(--dim)', fontSize: '13px', margin: 0 }}>
-                        {campaign.rules}
-                      </p>
-                    </section>
-                  )}
-
-                  {/* Add Videos Section */}
-                  <section className="dashboard-card" style={{ marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <h3 style={{ margin: 0 }}>Source Videos ({campaign.videos.length})</h3>
+                  </div>
+                </section>
+                
+                <section className="glass-panel" style={{ padding: '24px', borderRadius: '16px' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', color: 'var(--text)' }}>Metrics Overview</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                      <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--amber)' }}>{campaign.videos.length}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase' }}>Source Videos</div>
                     </div>
-                    <form onSubmit={handleAddVideo} style={{ display: 'flex', gap: '12px' }}>
-                      <input 
-                        value={newVideoUrl} 
-                        onChange={e => setNewVideoUrl(e.target.value)} 
-                        placeholder="Paste YouTube URLs here (separated by spaces or commas)..." 
-                        style={{ flex: 1, padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontSize: '14px' }}
-                      />
-                      <button type="submit" style={{ padding: '0 24px', borderRadius: '12px', background: 'var(--primary)', color: '#000', fontSize: '14px', fontWeight: 600, border: 'none', cursor: 'pointer', transition: 'all 0.2s' }}>Add</button>
-                    </form>
-                  </section>
-
-                  {/* Videos Grid */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px' }}>
-                    {campaign.videos.map(v => {
-                      const isSelected = selectedVideoUrls.has(v.video_url)
-                      
-                      const getYoutubeId = (url: string) => {
-                        const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?]+)/);
-                        return match ? match[1] : null;
-                      };
-                      const ytid = getYoutubeId(v.video_url);
-                      
-                      return (
-                        <div 
-                          key={v.id}
-                          onClick={() => setExpandedVideoId(v.id)}
-                          style={{
-                            background: 'var(--panel)',
-                            border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border)',
-                            borderRadius: '16px',
-                            overflow: 'hidden',
-                            cursor: 'pointer',
-                            transition: 'all 0.3s ease',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            boxShadow: isSelected ? '0 0 0 1px var(--primary)' : '0 4px 12px rgba(0,0,0,0.1)'
-                          }}
-                          onMouseOver={e => {
-                            e.currentTarget.style.transform = 'translateY(-4px)';
-                            if (!isSelected) e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-                          }}
-                          onMouseOut={e => {
-                            e.currentTarget.style.transform = 'none';
-                            if (!isSelected) e.currentTarget.style.borderColor = 'var(--border)';
-                          }}
-                        >
-                          {/* Thumbnail Header */}
-                          <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#000' }}>
-                            {ytid ? (
-                              <img src={`https://img.youtube.com/vi/${ytid}/mqdefault.jpg`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="thumbnail" />
-                            ) : (
-                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: 'var(--dim)' }}>No thumb</div>
-                            )}
-                            
-                            {/* Duration overlay */}
-                            {v.duration_sec && (
-                              <div style={{ position: 'absolute', bottom: '8px', right: '8px', background: 'rgba(0,0,0,0.8)', color: '#fff', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 600 }}>
-                                {Math.floor(v.duration_sec / 60)}:{(v.duration_sec % 60).toString().padStart(2, '0')}
-                              </div>
-                            )}
-                          </div>
-                          
-                          {/* Card Content */}
-                          <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', flex: 1 }}>
-                            <h3 style={{ fontSize: '16px', marginBottom: '8px', lineHeight: '1.4', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                              {v.title || v.video_url}
-                            </h3>
-                            
-                            <div style={{ fontSize: '13px', color: 'var(--dim)', marginBottom: '16px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }}>{v.channel || 'Unknown'}</span>
-                              <span>&bull;</span>
-                              <span>
-                                {v.views !== undefined ? (
-                                  v.views >= 1000000 
-                                    ? (v.views / 1000000).toFixed(1) + 'M views' 
-                                    : v.views >= 1000 
-                                      ? (v.views / 1000).toFixed(1) + 'K views' 
-                                      : v.views + ' views'
-                                ) : 'N/A views'}
-                              </span>
-                            </div>
-                            
-                            <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <div style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', color: (v.has_ingest && v.has_asr) ? '#4caf50' : 'var(--amber)' }}>
-                                <span>●</span> {(v.has_ingest && v.has_asr) ? 'Ready' : (v.has_ingest ? 'Pending Transcribe' : 'Pending Download')}
-                              </div>
-                              
-                              {onSendToStudio && (v.has_ingest && v.has_asr) && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    onSendToStudio(v.video_url)
-                                  }}
-                                  style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '16px', background: 'var(--amber)', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-                                >
-                                  Open Studio
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                      <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--amber)' }}>{campaign.clips.length}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase' }}>Total Clips</div>
+                    </div>
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                      <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--green)' }}>
+                        {campaign.clips.filter(c => c.role === 'mine').length}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase' }}>Our Clips</div>
+                    </div>
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                      <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--red)' }}>
+                        {campaign.clips.filter(c => c.role === 'competitor').length}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase' }}>Competitor Clips</div>
+                    </div>
                   </div>
-                </>
-              )}
-            </>
-          )}
+                </section>
+              </div>
 
-          {activeTab === 'clips' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
-              <section className="dashboard-card" style={{ margin: 0 }}>
-                <h3>Add Clip to Brain</h3>
-                <p style={{ color: 'var(--dim)', fontSize: '13px', marginBottom: '16px' }}>
-                  Paste a short-form video link. The AI will extract the visual hook text, audio hook, thumbnail, and performance metrics automatically.
-                </p>
-                <form onSubmit={handleAddClip} style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '24px' }}>
-                  <select 
-                    value={clipRole} 
-                    onChange={e => setClipRole(e.target.value as any)}
-                    style={{ padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)' }}
-                  >
-                    <option value="competitor">Competitor Clip</option>
-                    <option value="mine">My Clip</option>
-                  </select>
-                  <input 
-                    style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)' }}
-                    placeholder="YouTube Shorts, TikTok, or Instagram link..." 
-                    value={newClipUrl}
-                    onChange={e => setNewClipUrl(e.target.value)}
-                  />
-                  <button type="submit" className="btn-primary" disabled={!!clipAnalysisMsg}>Analyze Clip</button>
-                </form>
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
-                  <h3 style={{ margin: 0 }}>My Analyzed Clips</h3>
-                  <div>
-                    <label style={{ cursor: 'pointer', fontSize: '12px', padding: '6px 12px', background: 'var(--border)', borderRadius: '4px', fontWeight: 600 }}>
-                      {csvUploading ? 'Uploading...' : 'Import Studio CSV'}
-                      <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload} disabled={csvUploading} />
-                    </label>
-                  </div>
-                </div>
-                
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {(campaign.clips || []).filter(c => c.role === 'mine').map(c => <ClipCard key={c.id} clip={c} expanded={expandedClipId === c.id} onToggle={() => setExpandedClipId(expandedClipId === c.id ? null : c.id)} />)}
-                  {(campaign.clips || []).filter(c => c.role === 'mine').length === 0 && <p className="empty-state">No personal clips analyzed yet.</p>}
-                </div>
-                
-                <h3 style={{ marginTop: '32px', marginBottom: '16px' }}>Competitor Clips</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {(campaign.clips || []).filter(c => c.role === 'competitor').map(c => <ClipCard key={c.id} clip={c} expanded={expandedClipId === c.id} onToggle={() => setExpandedClipId(expandedClipId === c.id ? null : c.id)} />)}
-                  {(campaign.clips || []).filter(c => c.role === 'competitor').length === 0 && <p className="empty-state">No competitor clips analyzed yet.</p>}
-                </div>
-              </section>
-
-              <section className="dashboard-card moments-section" style={{ margin: 0 }}>
-                <h3>Moment Recommendations</h3>
-                <p style={{ color: 'var(--dim)', fontSize: '12px', marginBottom: '16px' }}>
-                  Based on long-form source videos.
-                </p>
-                {campaign.moments.length === 0 ? (
-                  <p className="empty-state">No moments analyzed yet. Click "Run Analysis" at the top.</p>
-                ) : (
-                  <div className="moments-list">
-                    {campaign.moments.slice(0, 10).map((m: CampaignMoment) => {
+              {campaign.moments.length > 0 && (
+                <section className="glass-panel" style={{ padding: '24px', borderRadius: '16px' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', color: 'var(--text)' }}>Top Moment Recommendations</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                    {campaign.moments.slice(0, 3).map((m: CampaignMoment) => {
                       const sourceVideo = campaign.videos.find(v => v.video_url === m.video_url);
                       return (
-                        <div key={m.id} className="moment-card">
-                          <div className="moment-score">
-                            {(m.recommendation_score || 0).toFixed(1)}
-                          </div>
-                          <div className="moment-details">
-                            <div style={{ fontSize: '11px', color: 'var(--primary)', fontWeight: 600, marginBottom: '6px' }}>
-                              From: {sourceVideo?.title || 'Unknown Video'} 
-                              {sourceVideo?.channel && <span style={{ color: 'var(--dim)', fontWeight: 400 }}> • {sourceVideo.channel}</span>}
+                        <div key={m.id} style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                            <div style={{ fontSize: '11px', color: 'var(--amber)', fontWeight: 600 }}>{sourceVideo?.title || 'Unknown Video'}</div>
+                            <div style={{ background: 'var(--amber)', color: '#000', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 700 }}>
+                              Score: {(m.recommendation_score || 0).toFixed(1)}
                             </div>
-                            <div className="moment-text">{m.transcript_text.substring(0, 120)}...</div>
-                            <div className="moment-stats">
-                              <span>Hook: {m.hook_template}</span>
-                              <span>Virality: {(m.predicted_virality || 0).toFixed(1)}</span>
-                              <span>Risk: {(m.drop_off_risk || 0).toFixed(2)}</span>
+                          </div>
+                          <div style={{ fontSize: '13px', color: 'var(--text)', marginBottom: '12px', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                            "{m.transcript_text}"
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {/* Analyzer Video Ranking */}
+              {videoRanking.length > 0 && (
+                <section className="glass-panel" style={{ padding: '24px', borderRadius: '16px' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', color: 'var(--text)' }}>Analyzer: Video Ranking</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                    {videoRanking.map((vr, i) => {
+                      const sourceVideo = campaign.videos.find(v => v.video_url === vr.video_url);
+                      return (
+                        <div key={vr.video_url} style={{ display: 'flex', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                          <div style={{ fontSize: '24px', fontWeight: 800, color: i === 0 ? 'var(--amber)' : 'var(--dim)', marginRight: '16px', minWidth: '24px' }}>
+                            #{i + 1}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text)', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px' }}>
+                              {sourceVideo?.title || 'Unknown Video'}
+                            </div>
+                            <div style={{ fontSize: '12px', color: 'var(--dim)' }}>
+                              Potential Clips: <strong style={{ color: 'var(--green)' }}>{vr.clip_potential}</strong>
                             </div>
                           </div>
                         </div>
                       );
                     })}
                   </div>
+                </section>
+              )}
+
+              {/* AI Best Ideas */}
+              {hookRecs && (
+                <section className="glass-panel" style={{ padding: '24px', borderRadius: '16px', background: 'linear-gradient(135deg, rgba(255,170,0,0.05), rgba(0,0,0,0.4))' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', color: 'var(--amber)' }}>✨ AI Best Ideas: Hook Strategy</h3>
+                  <p style={{ fontSize: '14px', color: 'var(--text)', lineHeight: '1.6', marginBottom: '16px' }}>
+                    {hookRecs.recommendation}
+                  </p>
+                  <div style={{ display: 'flex', gap: '24px' }}>
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Visual Hook Success</div>
+                      <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text)' }}>{hookRecs.visual_score}%</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Audio Hook Success</div>
+                      <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text)' }}>{hookRecs.audio_score}%</div>
+                    </div>
+                  </div>
+                </section>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'social' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <section className="glass-panel" style={{ padding: '32px', borderRadius: '16px', background: 'var(--panel)' }}>
+                <h3 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '16px', color: 'var(--text)' }}>Instagram Analytics</h3>
+                
+                {!igData.connected ? (
+                  <form onSubmit={handleIgConnect} style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '400px' }}>
+                    <p style={{ color: 'var(--dim)', fontSize: '14px', marginBottom: '8px' }}>
+                      Connect your Meta App to pull real-time Reels performance data directly from your Instagram account.
+                    </p>
+                    <input 
+                      type="text" 
+                      placeholder="Meta App ID" 
+                      value={igAppId}
+                      onChange={e => setIgAppId(e.target.value)}
+                      style={{ padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.2)', color: 'var(--text)' }}
+                      required
+                    />
+                    <input 
+                      type="password" 
+                      placeholder="Meta App Secret" 
+                      value={igAppSecret}
+                      onChange={e => setIgAppSecret(e.target.value)}
+                      style={{ padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.2)', color: 'var(--text)' }}
+                      required
+                    />
+                    <button type="submit" disabled={loading} style={{ padding: '12px 16px', borderRadius: '8px', background: 'var(--amber)', color: '#000', fontWeight: 600, cursor: 'pointer', border: 'none' }}>
+                      {loading ? 'Connecting...' : 'Connect Instagram'}
+                    </button>
+                  </form>
+                ) : (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+                      <div style={{ fontSize: '16px', color: 'var(--green)' }}>✓ Connected as <strong>@{igData.username}</strong></div>
+                      <button onClick={loadIgOverview} style={{ padding: '8px 16px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', color: 'var(--text)', cursor: 'pointer' }}>Refresh Sync</button>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '20px' }}>
+                      {igData.clips && igData.clips.map(c => (
+                        <div key={c.id} style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--glass-border)' }}>
+                          <div style={{ width: '100%', aspectRatio: '9/16', background: '#000', position: 'relative' }}>
+                            {c.thumbnail ? <img src={c.thumbnail} alt="thumb" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ padding: '20px', color: 'var(--dim)', textAlign: 'center' }}>No Thumb</div>}
+                            <div style={{ position: 'absolute', bottom: '8px', right: '8px', background: 'rgba(0,0,0,0.8)', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', color: '#fff', fontWeight: 600 }}>
+                              👁 {c.views}
+                            </div>
+                          </div>
+                          <div style={{ padding: '16px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                              <span style={{ fontSize: '12px', color: 'var(--dim)' }}>Likes: <strong style={{ color: 'var(--fg)' }}>{c.likes}</strong></span>
+                              <span style={{ fontSize: '12px', color: 'var(--dim)' }}>Reach: <strong style={{ color: 'var(--fg)' }}>{c.reach}</strong></span>
+                            </div>
+                            {c.permalink && (
+                              <a href={c.permalink} target="_blank" rel="noreferrer" style={{ fontSize: '12px', color: 'var(--amber)', textDecoration: 'none' }}>View on Instagram →</a>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </section>
             </div>
           )}
+
+          {activeTab === 'videos' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--panel-2)', padding: '16px', borderRadius: '16px', border: '1px solid var(--glass-border)' }}>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {(['all', 'source', 'mine', 'competitor'] as const).map(filter => (
+                    <button
+                      key={filter}
+                      onClick={() => setVideoFilter(filter)}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '20px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        textTransform: 'capitalize',
+                        background: videoFilter === filter ? 'var(--amber)' : 'rgba(255,255,255,0.05)',
+                        color: videoFilter === filter ? '#000' : 'var(--dim)',
+                        border: videoFilter === filter ? '1px solid var(--amber)' : '1px solid var(--glass-border)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      {filter === 'source' ? 'Campaign Source' : filter === 'mine' ? 'Our Clips' : filter === 'competitor' ? 'Competitors' : 'All Media'}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <label style={{ padding: '10px 20px', borderRadius: '20px', background: 'rgba(255,255,255,0.1)', color: 'var(--text)', fontSize: '14px', fontWeight: 600, border: '1px solid var(--glass-border)', cursor: 'pointer', display: 'flex', alignItems: 'center', transition: 'background 0.2s' }}>
+                    Import CSV
+                    <input type="file" accept=".csv" style={{ display: 'none' }} onChange={async (e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        try {
+                          await api.importAnalyticsCsv(activeId, e.target.files[0]);
+                          alert("CSV imported successfully! Analytics updated.");
+                          loadCampaign(activeId);
+                        } catch (err) {
+                          alert("Failed to import CSV: " + err);
+                        }
+                      }
+                    }} />
+                  </label>
+                  <button 
+                    onClick={() => setShowAddMediaModal(true)}
+                    style={{ padding: '10px 20px', borderRadius: '20px', background: 'var(--amber)', color: '#000', fontSize: '14px', fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(255, 178, 36, 0.3)' }}
+                  >
+                    <span style={{ fontSize: '18px', lineHeight: 1 }}>+</span> Add Media
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px' }}>
+                {(videoFilter === 'all' || videoFilter === 'source') && campaign.videos.map(v => {
+                  const getYoutubeId = (url: string) => {
+                    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?]+)/);
+                    return match ? match[1] : null;
+                  };
+                  const ytid = getYoutubeId(v.video_url);
+                  return (
+                    <div 
+                      key={`v-${v.id}`}
+                      className="glass-panel"
+                      onClick={() => {
+                        if (onSendToStudio && v.has_ingest && v.has_asr) onSendToStudio(v.video_url);
+                      }}
+                      style={{
+                        borderRadius: '16px',
+                        overflow: 'hidden',
+                        cursor: (v.has_ingest && v.has_asr) ? 'pointer' : 'default',
+                        transition: 'transform 0.2s, box-shadow 0.2s',
+                        display: 'flex',
+                        flexDirection: 'column'
+                      }}
+                      onMouseOver={e => { if (v.has_ingest && v.has_asr) e.currentTarget.style.transform = 'translateY(-4px)'; }}
+                      onMouseOut={e => { e.currentTarget.style.transform = 'none'; }}
+                    >
+                      <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#000' }}>
+                        {ytid ? (
+                          <img src={`https://img.youtube.com/vi/${ytid}/mqdefault.jpg`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="thumbnail" />
+                        ) : (
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: 'var(--dim)' }}>No thumb</div>
+                        )}
+                        <div style={{ position: 'absolute', top: '8px', left: '8px', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', color: '#fff', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', border: '1px solid rgba(255,255,255,0.2)' }}>
+                          Source
+                        </div>
+                        {v.duration_sec && (
+                          <div style={{ position: 'absolute', bottom: '8px', right: '8px', background: 'rgba(0,0,0,0.8)', color: '#fff', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 600 }}>
+                            {Math.floor(v.duration_sec / 60)}:{(v.duration_sec % 60).toString().padStart(2, '0')}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', flex: 1, background: 'rgba(0,0,0,0.3)' }}>
+                        <h3 style={{ fontSize: '14px', marginBottom: '8px', lineHeight: '1.4', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{v.title || v.video_url}</h3>
+                        <div style={{ fontSize: '12px', color: 'var(--dim)', marginBottom: '16px' }}>{v.channel || 'Unknown Channel'}</div>
+                        <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: (v.has_ingest && v.has_asr) ? 'var(--green)' : 'var(--amber)' }}>
+                            <span>●</span> {(v.has_ingest && v.has_asr) ? 'Ready for Studio' : 'Processing...'}
+                          </div>
+                          {(videoFilter === 'all' || videoFilter === 'source') && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); loadCompetitorMatches(v.video_url); }}
+                              style={{ padding: '4px 8px', fontSize: '11px', background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', borderRadius: '4px', color: 'var(--text)', cursor: 'pointer' }}
+                            >
+                              AI Matches
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+                
+                {['all', 'mine', 'competitor'].includes(videoFilter) && campaign.clips.filter(c => videoFilter === 'all' || c.role === videoFilter).map(c => (
+                  <div 
+                    key={`c-${c.id}`} 
+                    className="glass-panel" 
+                    onClick={() => setSelectedClip(c)}
+                    style={{ borderRadius: '16px', overflow: 'hidden', display: 'flex', flexDirection: 'column', cursor: 'pointer', transition: 'transform 0.2s, box-shadow 0.2s' }}
+                    onMouseOver={e => { e.currentTarget.style.transform = 'translateY(-4px)'; }}
+                    onMouseOut={e => { e.currentTarget.style.transform = 'none'; }}
+                  >
+                    <div style={{ display: 'flex', padding: '16px', gap: '16px', background: 'rgba(0,0,0,0.3)' }}>
+                      <div style={{ width: '72px', flexShrink: 0, aspectRatio: '9/16', background: '#000', borderRadius: '8px', overflow: 'hidden', position: 'relative' }}>
+                        {c.thumbnail_path ? (
+                          <img src={c.thumbnail_path.includes('campaigns') ? api.fileUrl(`campaigns/${c.thumbnail_path.split(/campaigns[/\\]/)[1].replace(/\\/g, '/')}`) : c.thumbnail_path} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="thumb" />
+                        ) : (
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: 'var(--dim)' }}>No thumb</div>
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                          <div style={{ background: c.role === 'mine' ? 'rgba(61, 214, 163, 0.2)' : 'rgba(255, 92, 73, 0.2)', color: c.role === 'mine' ? 'var(--green)' : 'var(--red)', padding: '2px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: 700, textTransform: 'uppercase' }}>
+                            {c.role === 'mine' ? 'Our Clip' : 'Competitor'}
+                          </div>
+                        </div>
+                        <div style={{ fontWeight: 600, fontSize: '13px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginBottom: '4px', color: 'var(--text)' }}>
+                          {c.title || c.clip_url}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--dim)', marginBottom: '8px' }}>{c.channel || 'Unknown Channel'}</div>
+                        <div style={{ marginTop: 'auto', display: 'flex', gap: '12px', fontSize: '12px', color: 'var(--dim)', alignItems: 'center' }}>
+                          <span><strong style={{ color: 'var(--text)' }}>{c.views || 0}</strong> views</span>
+                          <span><strong style={{ color: 'var(--text)' }}>{c.likes || 0}</strong> likes</span>
+                          {c.clip_url && (
+                            <a href={c.clip_url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 'auto', color: 'var(--amber)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              Source ↗
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
+      
+      {/* Add Media Modal */}
+      {showAddMediaModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="glass-panel" style={{ borderRadius: '24px', padding: '40px', width: '100%', maxWidth: '500px', position: 'relative' }}>
+            <button 
+              onClick={() => setShowAddMediaModal(false)}
+              style={{ position: 'absolute', top: '24px', right: '24px', background: 'transparent', border: 'none', color: 'var(--dim)', fontSize: '24px', cursor: 'pointer' }}
+            >×</button>
+            
+            <h2 style={{ fontSize: '24px', marginBottom: '8px', fontWeight: 700, color: 'var(--text)' }}>Add Media</h2>
+            <p style={{ color: 'var(--dim)', fontSize: '14px', marginBottom: '32px' }}>Import new videos or shorts to analyze within this campaign.</p>
+            
+            <form onSubmit={handleAddMediaSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>Video Type</label>
+                <select 
+                  value={addMediaType} 
+                  onChange={e => setAddMediaType(e.target.value as any)}
+                  style={{ padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.3)', color: 'var(--text)', fontSize: '14px', outline: 'none' }}
+                >
+                  <option value="source">Campaign Source Video (Long-form)</option>
+                  <option value="mine">Our Clip / Lovable Campaign Video (Short)</option>
+                  <option value="competitor">Competitor Clip (Short)</option>
+                  <option value="hashtag">Hashtag Search (Automated)</option>
+                </select>
+              </div>
+              
+              {addMediaType === 'hashtag' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>Hashtag</label>
+                  <input 
+                    type="text"
+                    value={addMediaHashtag} 
+                    onChange={e => setAddMediaHashtag(e.target.value)} 
+                    placeholder="e.g. #productivity" 
+                    style={{ padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.3)', color: 'var(--text)', fontSize: '14px', outline: 'none' }}
+                    required
+                  />
+                  <p style={{ fontSize: '12px', color: 'var(--dim)', margin: 0 }}>We will automatically find the top shorts and ingest them into the campaign.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>URLs (YouTube, TikTok, Instagram)</label>
+                  <textarea 
+                    value={addMediaUrls} 
+                    onChange={e => setAddMediaUrls(e.target.value)} 
+                    placeholder="Paste one or more URLs here..." 
+                    style={{ padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.3)', color: 'var(--text)', fontSize: '14px', minHeight: '100px', resize: 'vertical', outline: 'none' }}
+                    required
+                  />
+                </div>
+              )}
+              
+              {addMediaType !== 'source' && addMediaType !== 'hashtag' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>Automation Settings</label>
+                  
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', color: 'var(--dim)', cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={addMediaSettings.download} 
+                      onChange={e => setAddMediaSettings(s => ({ ...s, download: e.target.checked }))}
+                    />
+                    Download Video (Required for frames & audio)
+                  </label>
+                  
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', color: 'var(--dim)', cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={addMediaSettings.transcribe} 
+                      onChange={e => setAddMediaSettings(s => ({ ...s, transcribe: e.target.checked }))}
+                    />
+                    Transcribe Audio (AI hook detection)
+                  </label>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', color: 'var(--dim)', cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={addMediaSettings.analyze} 
+                      onChange={e => setAddMediaSettings(s => ({ ...s, analyze: e.target.checked }))}
+                    />
+                    Analyze (OCR & metadata)
+                  </label>
+                </div>
+              )}
+              
+              <button 
+                type="submit" 
+                disabled={loading}
+                style={{ 
+                  marginTop: '12px', padding: '16px', borderRadius: '12px', background: 'var(--amber)', color: '#000', fontSize: '15px', fontWeight: 600, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1, transition: 'all 0.2s', boxShadow: '0 4px 16px rgba(255, 178, 36, 0.3)' 
+                }}
+              >
+                {loading ? 'Adding...' : 'Add Media'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* AI Matches Modal */}
+      {selectedMatchVideo && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'var(--panel)', padding: '32px', borderRadius: '16px', border: '1px solid var(--glass-border)', width: '600px', maxWidth: '90%', maxHeight: '80vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 700, color: 'var(--text)' }}>AI Competitor Matches</h2>
+              <button onClick={() => { setSelectedMatchVideo(null); setCompetitorMatches([]); }} style={{ background: 'none', border: 'none', color: 'var(--dim)', cursor: 'pointer', fontSize: '24px' }}>&times;</button>
+            </div>
+            
+            <div style={{ fontSize: '14px', color: 'var(--dim)', marginBottom: '24px' }}>
+              Comparing against source: <strong style={{ color: 'var(--amber)' }}>{selectedMatchVideo.title || selectedMatchVideo.video_url}</strong>
+            </div>
+
+            {loading ? (
+              <div style={{ padding: '40px', textAlign: 'center', color: 'var(--amber)' }}>Analyzing matches...</div>
+            ) : competitorMatches.length === 0 ? (
+              <div style={{ padding: '40px', textAlign: 'center', color: 'var(--dim)', background: 'rgba(0,0,0,0.2)', borderRadius: '12px' }}>
+                No competitor clips found matching this source video's transcript.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {competitorMatches.map((m, i) => (
+                  <div key={i} style={{ background: 'rgba(255, 170, 0, 0.05)', border: '1px solid rgba(255, 170, 0, 0.2)', padding: '16px', borderRadius: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                      <span style={{ fontSize: '12px', color: 'var(--amber)', fontWeight: 600 }}>Match Found (Confidence: {(m.confidence * 100).toFixed(1)}%)</span>
+                      <span style={{ fontSize: '12px', color: 'var(--dim)' }}>{m.start_sec.toFixed(1)}s - {m.end_sec.toFixed(1)}s</span>
+                    </div>
+                    
+                    {m.visual_hook && (
+                      <div style={{ marginBottom: '12px' }}>
+                        <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '4px' }}>Visual Hook (Tesseract OCR):</div>
+                        <div style={{ fontSize: '13px', background: 'rgba(255, 255, 255, 0.05)', padding: '8px', borderRadius: '4px', color: '#fff', borderLeft: '2px solid var(--amber)' }}>
+                          {m.visual_hook}
+                        </div>
+                      </div>
+                    )}
+                    
+                    <div>
+                      <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '4px' }}>Matched Transcript:</div>
+                      <div style={{ fontSize: '13px', color: 'var(--dim)', fontStyle: 'italic', marginBottom: '16px' }}>
+                        "...{m.matched_in_video}..."
+                      </div>
+                    </div>
+                    
+                    {improvedHooks[i] ? (
+                      <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px' }}>
+                        <h4 style={{ fontSize: '12px', color: 'var(--amber)', textTransform: 'uppercase', marginBottom: '8px' }}>✨ Better Visual Hooks (Text)</h4>
+                        <ul style={{ margin: 0, paddingLeft: '16px', color: 'var(--text)', fontSize: '13px', marginBottom: '12px' }}>
+                          {improvedHooks[i].visual_hooks.map((h, idx) => <li key={idx} style={{ marginBottom: '4px' }}>{h}</li>)}
+                        </ul>
+                        <h4 style={{ fontSize: '12px', color: 'var(--amber)', textTransform: 'uppercase', marginBottom: '8px' }}>✨ Better Audio Hooks (Script)</h4>
+                        <ul style={{ margin: 0, paddingLeft: '16px', color: 'var(--text)', fontSize: '13px' }}>
+                          {improvedHooks[i].audio_hooks.map((h, idx) => <li key={idx} style={{ marginBottom: '4px' }}>{h}</li>)}
+                        </ul>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => handleImproveHook(i, m.matched_in_video, m.visual_hook || '')}
+                        disabled={improvingHookFor === i}
+                        style={{ padding: '8px 12px', fontSize: '12px', background: 'rgba(255, 170, 0, 0.1)', border: '1px solid var(--amber)', color: 'var(--amber)', borderRadius: '6px', cursor: improvingHookFor === i ? 'not-allowed' : 'pointer', fontWeight: 600, transition: 'all 0.2s' }}
+                      >
+                        {improvingHookFor === i ? 'Thinking...' : '✨ Improve Idea with AI'}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Selected Clip Modal */}
+      {selectedClip && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="glass-panel" style={{ width: '600px', maxWidth: '90vw', maxHeight: '90vh', overflowY: 'auto', borderRadius: '16px', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div style={{ background: selectedClip.role === 'mine' ? 'rgba(61, 214, 163, 0.2)' : 'rgba(255, 92, 73, 0.2)', color: selectedClip.role === 'mine' ? 'var(--green)' : 'var(--red)', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' }}>
+                {selectedClip.role === 'mine' ? 'Our Clip' : 'Competitor'}
+              </div>
+              <button onClick={() => setSelectedClip(null)} style={{ background: 'none', border: 'none', color: 'var(--dim)', fontSize: '24px', cursor: 'pointer' }}>×</button>
+            </div>
+            
+            <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--text)', marginBottom: '8px' }}>{selectedClip.title || selectedClip.clip_url}</h2>
+            <div style={{ fontSize: '14px', color: 'var(--dim)', marginBottom: '16px' }}>{selectedClip.channel || 'Unknown Channel'}</div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px', background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Views</div>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>{selectedClip.views || 0}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Likes</div>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>{selectedClip.likes || 0}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Comments</div>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>{selectedClip.comments || 0}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Shares</div>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>{selectedClip.shares || 0}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Impressions</div>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>{selectedClip.impressions || 0}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>CTR</div>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>{selectedClip.ctr ? `${selectedClip.ctr}%` : '0%'}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Avg Viewed</div>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>{selectedClip.watch_time_pct ? `${selectedClip.watch_time_pct}%` : '0%'}</div>
+              </div>
+              {selectedClip.duration_sec && (
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Duration</div>
+                  <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>{Math.floor(selectedClip.duration_sec / 60)}:{(selectedClip.duration_sec % 60).toString().padStart(2, '0')}</div>
+                </div>
+              )}
+            </div>
+
+            {selectedClip.audio_hook && (
+              <div style={{ marginBottom: '24px' }}>
+                <h3 style={{ fontSize: '14px', color: 'var(--amber)', marginBottom: '8px' }}>Audio Hook</h3>
+                <div style={{ background: 'rgba(255,178,36,0.1)', padding: '12px', borderRadius: '8px', fontSize: '14px', fontStyle: 'italic', color: 'var(--text)' }}>
+                  "{selectedClip.audio_hook}"
+                </div>
+              </div>
+            )}
+
+            {selectedClip.hook_text_overlay && (
+              <div style={{ marginBottom: '24px' }}>
+                <h3 style={{ fontSize: '14px', color: 'var(--amber)', marginBottom: '8px' }}>Visual Hook</h3>
+                <div style={{ background: 'rgba(255,178,36,0.1)', padding: '12px', borderRadius: '8px', fontSize: '14px', fontStyle: 'italic', color: 'var(--text)' }}>
+                  "{selectedClip.hook_text_overlay}"
+                </div>
+              </div>
+            )}
+            
+            {selectedClip.transcript_excerpt && (
+              <div style={{ marginBottom: '24px' }}>
+                <h3 style={{ fontSize: '14px', color: 'var(--amber)', marginBottom: '8px' }}>Transcript Excerpt</h3>
+                <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px', fontSize: '13px', lineHeight: '1.5', color: 'var(--dim)' }}>
+                  {selectedClip.transcript_excerpt}...
+                </div>
+              </div>
+            )}
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '32px', paddingTop: '16px', borderTop: '1px solid var(--glass-border)' }}>
+              {selectedClip.clip_url && (
+                <a href={selectedClip.clip_url} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.1)', color: 'var(--text)', borderRadius: '6px', textDecoration: 'none', fontSize: '13px', fontWeight: 600 }}>
+                  Open Source Video ↗
+                </a>
+              )}
+              
+              <button 
+                onClick={async () => {
+                  if (confirm('Are you sure you want to delete this clip?')) {
+                    await api.deleteCampaignClip(activeId, selectedClip.id);
+                    setSelectedClip(null);
+                    loadCampaign(activeId);
+                  }
+                }}
+                style={{ padding: '8px 16px', background: 'rgba(255, 92, 73, 0.2)', color: 'var(--red)', border: '1px solid rgba(255, 92, 73, 0.4)', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+              >
+                Delete Clip
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
 
-function ClipCard({ clip, expanded, onToggle }: { clip: any, expanded: boolean, onToggle: () => void }) {
+function ClipCard({ clip, expanded, onToggle, onClick }: { clip: any, expanded: boolean, onToggle: () => void, onClick: () => void }) {
+
   const getImageUrl = (path?: string) => {
     if (!path) return ''
     // If it's a full path, we need to map it to the media endpoint
