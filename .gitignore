@@ -67,4 +67,6 @@ Thumbs.db
 # Downloaded Binaries
 deno.exe
 run_azure_uploader.ps1  
- 
+
+# Large model checkpoints
+wav2vec2_checkpoints/

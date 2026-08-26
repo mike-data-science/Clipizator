@@ -82,42 +82,58 @@ PRESETS: dict[str, Preset] = {
         Preset(
             name="classic",
             font="Inter", font_file="Inter-Bold.ttf", size=72,
-            primary="&H00FFFFFF", active="&H0000D7FF", emphasis="&H0000D7FF",
-            outline_color="&H00000000", outline=4, shadow=1,
+            primary="&H00FFFFFF&", active="&H0000FFFA&", emphasis="&H0000FFFA&",
+            outline_color="&H00000000&", outline=5, shadow=2,
             bold=True, uppercase=False, margin_v=560, pop=False,
-            event_tag_color="&H00B0B0B0",
+            event_tag_color="&H0000FFFA&",
         ),
         Preset(
             name="beast",
             font="Anton", font_file="Anton-Regular.ttf", size=92,
-            primary="&H00FFFFFF", active="&H0000E5FF", emphasis="&H000045FF",
-            outline_color="&H00000000", outline=6, shadow=2,
+            primary="&H00FFFFFF&", active="&H0000FFFA&", emphasis="&H00552DFF&",
+            outline_color="&H00000000&", outline=8, shadow=2,
             bold=False, uppercase=True, margin_v=560, pop=True,
-            event_tag_color="&H0000E5FF",
+            event_tag_color="&H0000FFFA&",
         ),
         Preset(
             name="hormozi",
-            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=80,
-            primary="&H00FFFFFF", active="&H0000FF00", emphasis="&H0000D7FF",
-            outline_color="&H00000000", outline=5, shadow=0,
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=84,
+            primary="&H00FFFFFF&", active="&H0066FF00&", emphasis="&H0000FFFA&",
+            outline_color="&H00000000&", outline=7, shadow=1,
             bold=False, uppercase=True, margin_v=560, pop=True,
-            event_tag_color="&H0000FF00",
+            event_tag_color="&H0066FF00&",
         ),
         Preset(
             name="minimal",
-            font="Inter", font_file="Inter-Bold.ttf", size=60,
-            primary="&H00FFFFFF", active="&H00FFFFFF", emphasis="&H00FFFFFF",
-            outline_color="&H80000000", outline=2, shadow=0,
-            bold=True, uppercase=False, margin_v=480, pop=False,
-            event_tag_color="&H00C0C0C0",
+            font="Inter", font_file="Inter-Bold.ttf", size=62,
+            primary="&H00FFFFFF&", active="&H00F8BD38&", emphasis="&H0000FFFA&",
+            outline_color="&H00000000&", outline=3, shadow=1,
+            bold=True, uppercase=False, margin_v=500, pop=False,
+            event_tag_color="&H00F8BD38&",
         ),
         Preset(
             name="karaoke-pop",
-            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=76,
-            primary="&H00E8E8E8", active="&H00FF9500", emphasis="&H0000D7FF",
-            outline_color="&H00000000", outline=5, shadow=1,
-            bold=False, uppercase=False, margin_v=560, pop=True,
-            event_tag_color="&H00FF9500",
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=80,
+            primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H00F12DFF&",
+            outline_color="&H00000000&", outline=6, shadow=2,
+            bold=False, uppercase=True, margin_v=560, pop=True,
+            event_tag_color="&H00FFE500&",
+        ),
+        Preset(
+            name="neon-glow",
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=82,
+            primary="&H00FFFFFF&", active="&H00F12DFF&", emphasis="&H00FFE500&",
+            outline_color="&H001A001A&", outline=6, shadow=2,
+            bold=False, uppercase=True, margin_v=560, pop=True,
+            event_tag_color="&H00F12DFF&",
+        ),
+        Preset(
+            name="redbull",
+            font="Anton", font_file="Anton-Regular.ttf", size=92,
+            primary="&H00FFFFFF&", active="&H000055FF&", emphasis="&H0000FFFA&",
+            outline_color="&H00000000&", outline=8, shadow=2,
+            bold=False, uppercase=True, margin_v=560, pop=True,
+            event_tag_color="&H000055FF&",
         ),
     ]
 }
@@ -219,8 +235,6 @@ def _header(preset: Preset) -> str:
 
 def _chunk_text(chunk: Chunk, active_idx: int | None, preset: Preset, entrance: bool) -> str:
     parts: list[str] = []
-    if entrance and preset.pop:
-        parts.append("{\\fscx82\\fscy82\\t(0,110,\\fscx100\\fscy100)}")
     for i, word in enumerate(chunk.words):
         text = _esc(word.text.upper() if preset.uppercase else word.text)
         if i == active_idx:
@@ -229,8 +243,12 @@ def _chunk_text(chunk: Chunk, active_idx: int | None, preset: Preset, entrance: 
             color = preset.emphasis
         else:
             color = preset.primary
-        parts.append(f"{{\\c{color}}}{text}")
-    return " ".join(parts)
+        color_tag = color if color.endswith("&") else f"{color}&"
+        parts.append(f"{{\\c{color_tag}}}{text}")
+    line = " ".join(parts)
+    if entrance and preset.pop:
+        return f"{{\\fscx82\\fscy82\\t(0,110,\\fscx100\\fscy100)}}{line}"
+    return line
 
 
 def build_ass(

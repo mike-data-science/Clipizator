@@ -13,6 +13,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   const [newName, setNewName] = useState('')
   const [newReward, setNewReward] = useState('')
   const [newRules, setNewRules] = useState('')
+  const [newVideos, setNewVideos] = useState('')
   // Unified Add Media state
   const [showAddMediaModal, setShowAddMediaModal] = useState(false)
   const [addMediaType, setAddMediaType] = useState<'source' | 'mine' | 'competitor' | 'hashtag'>('source')
@@ -27,16 +28,18 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   
   // Video filter state
   const [videoFilter, setVideoFilter] = useState<'all' | 'source' | 'mine' | 'competitor'>('all')
-  const [csvUploading, setCsvUploading] = useState(false)
+  const [_csvUploading, _setCsvUploading] = useState(false)
+  void _csvUploading; void _setCsvUploading;
   
   // Extraction progress state
   const [extractMsg, setExtractMsg] = useState<string | null>(null)
   const [analyzeMsg, setAnalyzeMsg] = useState<string | null>(null)
   const [clipAnalysisMsg, setClipAnalysisMsg] = useState<string | null>(null)
 
-  const [transcripts, setTranscripts] = useState<any[]>([])
-  const [expandedVideoId, setExpandedVideoId] = useState<number | null>(null)
-  const [expandedClipId, setExpandedClipId] = useState<number | null>(null)
+  const [_transcripts, _setTranscripts] = useState<any[]>([])
+  const [_expandedVideoId, _setExpandedVideoId] = useState<number | null>(null)
+  const [_expandedClipId, _setExpandedClipId] = useState<number | null>(null)
+  void _transcripts; void _setTranscripts; void _expandedVideoId; void _setExpandedVideoId; void _expandedClipId; void _setExpandedClipId;
   
   // Analyzer AI state
   const [videoRanking, setVideoRanking] = useState<any[]>([])
@@ -47,11 +50,12 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   const [improvedHooks, setImprovedHooks] = useState<Record<number, { visual_hooks: string[], audio_hooks: string[] }>>({})
   
   // Social Hub state
-  const [igData, setIgData] = useState<{ connected: boolean, username?: string, error?: string, clips?: any[] }>({ connected: false })
+  const [igData, setIgData] = useState<{ connected: boolean, username?: string | null, error?: string, clips?: any[] }>({ connected: false })
   const [igAppId, setIgAppId] = useState('')
   const [igAppSecret, setIgAppSecret] = useState('')
 
-  const [selectedVideoUrls] = useState<Set<string>>(new Set())
+  const [_selectedVideoUrls] = useState<Set<string>>(new Set())
+  void _selectedVideoUrls;
   const [activeTab, setActiveTab] = useState<'overview' | 'videos' | 'social'>('overview')
 
   useEffect(() => {
@@ -128,7 +132,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
       setCampaign(data)
       
       // Fetch transcripts in the background for displaying them
-      api.getCampaignTranscripts(id).then(setTranscripts).catch(console.error)
+      api.getCampaignTranscripts(id).then(_setTranscripts).catch(console.error)
       // Fetch analyzer data
       api.getVideoRanking(id).then(setVideoRanking).catch(console.error)
       api.getHookRecommendations(id).then(setHookRecs).catch(console.error)
@@ -263,20 +267,18 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   async function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !activeId) return
-    setCsvUploading(true)
     try {
       const res = await api.importAnalyticsCsv(activeId, file)
       alert(`Updated analytics for ${res.updated} clips!`)
       loadCampaign(activeId)
     } catch (err) {
-      alert("Failed to upload CSV")
       console.error(err)
+      alert('Failed to import CSV')
     } finally {
-      setCsvUploading(false)
-      // Reset input
       e.target.value = ''
     }
   }
+  void handleCsvUpload;
 
   if (!activeId || !campaign) {
     return (
@@ -860,7 +862,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
                         <div style={{ fontWeight: 600, fontSize: '13px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginBottom: '4px', color: 'var(--text)' }}>
                           {c.title || c.clip_url}
                         </div>
-                        <div style={{ fontSize: '11px', color: 'var(--dim)', marginBottom: '8px' }}>{c.channel || 'Unknown Channel'}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--dim)', marginBottom: '8px' }}>{(c as any).channel || 'Unknown Channel'}</div>
                         <div style={{ marginTop: 'auto', display: 'flex', gap: '12px', fontSize: '12px', color: 'var(--dim)', alignItems: 'center' }}>
                           <span><strong style={{ color: 'var(--text)' }}>{c.views || 0}</strong> views</span>
                           <span><strong style={{ color: 'var(--text)' }}>{c.likes || 0}</strong> likes</span>
@@ -1159,6 +1161,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
 }
 
 function ClipCard({ clip, expanded, onToggle, onClick }: { clip: any, expanded: boolean, onToggle: () => void, onClick: () => void }) {
+  void onClick;
 
   const getImageUrl = (path?: string) => {
     if (!path) return ''
@@ -1259,3 +1262,4 @@ function ClipCard({ clip, expanded, onToggle, onClick }: { clip: any, expanded: 
     </div>
   )
 }
+void ClipCard;

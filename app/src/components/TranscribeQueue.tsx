@@ -110,7 +110,8 @@ export function TranscribeQueue({ onSendToStudio: _onSendToStudio }: { onSendToS
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           video_url: item.video_url,
-          campaign_id: item.campaign_id
+          campaign_id: item.campaign_id,
+          job_id: item.job_id
         })
       }).then(r => r.json())
       

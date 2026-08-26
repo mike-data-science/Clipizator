@@ -9,7 +9,7 @@ import ClipEditor from './ClipEditor'
  * never a bare number.
  */
 
-const RESTYLE_PRESETS = ['classic', 'beast', 'hormozi', 'minimal', 'karaoke-pop']
+const RESTYLE_PRESETS = ['beast', 'hormozi', 'karaoke-pop', 'neon-glow', 'redbull', 'classic', 'minimal']
 const CAMERA_MODES: [string, string][] = [
   ['cut', 'hard cut on speaker change'],
   ['pan', 'eased pan between speakers'],

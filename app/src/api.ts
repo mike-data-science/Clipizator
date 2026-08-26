@@ -110,7 +110,7 @@ export const api = {
     return res.json()
   },
   runJob: (source: string, llm: string, gemini_model: string, captions: string, asr_model: string) =>
-    post<void>('/jobs', { source, llm, gemini_model, captions, asr_model }),
+    post<{ ok: boolean; job_id: string }>('/jobs', { source, llm, gemini_model, captions, asr_model }),
   resumeJob: (jobId: string, llm?: string, gemini_model?: string, captions?: string, camera?: string, asr_model?: string) =>
     post<void>(`/jobs/${jobId}/resume`, { llm, gemini_model, captions, camera, asr_model }),
   jobResults: (jobId: string) => get<JobResults>(`/jobs/${jobId}/results`),

@@ -38,7 +38,12 @@ class RenderStage(Stage):
         if not (ingest and diarize and events and score and camera):
             raise StageError("Render needs every prior stage output.")
 
-        media = ingest["media_path"]
+        media_str = ingest.get("media_path", "").replace("\\", "/")
+        media = Path(media_str)
+        if not media.exists():
+            media = ctx.job_dir / Path(media_str).name
+        media = str(media)
+        
         probe = ingest["probe"]
         src_w, src_h = int(probe["width"]), int(probe["height"])
         segments = diarize["segments"]

@@ -21,7 +21,16 @@ from .timeline import ClipEdit, TimeRemap, detect_dead_space, keep_ranges
 
 
 def _load_stage(job_dir: Path, stage: str) -> dict:
-    return json.loads((job_dir / f"{stage}.json").read_text())["data"]
+    data = json.loads((job_dir / f"{stage}.json").read_text())["data"]
+    if stage == "ingest":
+        for key in ["media_path", "audio_path"]:
+            if key in data and data[key]:
+                val = data[key].replace("\\", "/")
+                p = Path(val)
+                if not p.exists():
+                    p = job_dir / Path(val).name
+                data[key] = str(p)
+    return data
 
 
 def context_for_clip(job_dir: Path, clip_idx: int, pad: float = 45.0) -> dict:
