@@ -189,6 +189,7 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
   const [captions, setCaptions] = useState('beast')
   const [asrModel, setAsrModel] = useState('large-v3-turbo')
   const [showKey, setShowKey] = useState(false)
+  const [showCaptionModal, setShowCaptionModal] = useState(false)
 
   const [phraseIdx, setPhraseIdx] = useState(0)
   const [wordIdx, setWordIdx] = useState(0)
@@ -217,35 +218,46 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
   const renderCaptionPreview = () => {
     const currentPhrase = SAMPLE_PHRASES[phraseIdx]
 
+    if (!showCaptionModal) return null;
+
     return (
-      <div className="caption-preview-container">
-        <div className="caption-preview-header">
-          <div className="caption-preview-title">
-            <span style={{ color: curStyle.activeColor }}>●</span>
-            <span>Live Subtitle Engine · {curStyle.label}</span>
-            <span style={{ fontSize: '10px', color: 'var(--amber)', background: 'rgba(255, 178, 36, 0.1)', padding: '2px 6px', borderRadius: '4px' }}>
-              {curStyle.badge}
-            </span>
+      <div className="modal-overlay" onClick={() => setShowCaptionModal(false)} style={{ zIndex: 1000, position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="caption-preview-container" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px', width: '100%', background: 'var(--bg)', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+          <div className="caption-preview-header">
+            <div className="caption-preview-title">
+              <span style={{ color: curStyle.activeColor }}>●</span>
+              <span>Live Subtitle Engine · {curStyle.label}</span>
+              <span style={{ fontSize: '10px', color: 'var(--amber)', background: 'rgba(255, 178, 36, 0.1)', padding: '2px 6px', borderRadius: '4px' }}>
+                {curStyle.badge}
+              </span>
+            </div>
+            <div className="caption-preview-controls">
+              <button
+                className="opt"
+                style={{ padding: '3px 8px', fontSize: '10px' }}
+                onClick={() => setPhraseIdx((p) => (p + 1) % SAMPLE_PHRASES.length)}
+                title="Cycle sample text"
+              >
+                ⟳ phrase
+              </button>
+              <button
+                className="opt"
+                style={{ padding: '3px 8px', fontSize: '10px' }}
+                onClick={() => setIsPlayingPreview((p) => !p)}
+                title={isPlayingPreview ? 'Pause preview' : 'Play preview'}
+              >
+                {isPlayingPreview ? '❚❚' : '▶'}
+              </button>
+              <button
+                className="opt"
+                style={{ padding: '3px 8px', fontSize: '10px', marginLeft: '8px' }}
+                onClick={() => setShowCaptionModal(false)}
+                title="Close preview"
+              >
+                ✕ Close
+              </button>
+            </div>
           </div>
-          <div className="caption-preview-controls">
-            <button
-              className="opt"
-              style={{ padding: '3px 8px', fontSize: '10px' }}
-              onClick={() => setPhraseIdx((p) => (p + 1) % SAMPLE_PHRASES.length)}
-              title="Cycle sample text"
-            >
-              ⟳ phrase
-            </button>
-            <button
-              className="opt"
-              style={{ padding: '3px 8px', fontSize: '10px' }}
-              onClick={() => setIsPlayingPreview((p) => !p)}
-              title={isPlayingPreview ? 'Pause preview' : 'Play preview'}
-            >
-              {isPlayingPreview ? '❚❚' : '▶'}
-            </button>
-          </div>
-        </div>
 
         <div className="caption-stage-backdrop">
           <div className="caption-stage-scanlines" />
@@ -308,6 +320,7 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
               </button>
             )
           })}
+        </div>
         </div>
       </div>
     )
@@ -452,10 +465,18 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
                   {preset}
                 </button>
               ))}
+              <button 
+                className="opt" 
+                style={{ marginLeft: '12px', border: '1px solid var(--amber)', color: 'var(--amber)' }}
+                onClick={() => setShowCaptionModal(true)}
+              >
+                👁 Preview Styles
+              </button>
             </div>
-            {renderCaptionPreview()}
           </div>
         </section>
+        
+        {renderCaptionPreview()}
 
         {(running || Object.keys(stages).length > 0) && (
           <section className="deck">

@@ -483,6 +483,28 @@ def get_queue_pending_transcribe():
                     "title": cv.get("title"),
                     "job_id": cv.get("job_id"),
                 })
+                
+    # Also find standalone jobs that are downloaded but not transcribed
+    jobs_dir = _home() / "jobs"
+    if jobs_dir.exists():
+        import json
+        seen_jobs = {v["job_id"] for v in videos if v.get("job_id")}
+        for job_dir in jobs_dir.iterdir():
+            if not job_dir.is_dir() or job_dir.name in seen_jobs:
+                continue
+            if (job_dir / "ingest.json").exists() and not (job_dir / "asr.json").exists():
+                try:
+                    with open(job_dir / "ingest.json") as f:
+                        ingest_data = json.load(f).get("data", {})
+                    videos.append({
+                        "campaign_id": "standalone",
+                        "campaign_name": "Standalone Jobs",
+                        "video_url": ingest_data.get("webpage_url") or ingest_data.get("media_path") or job_dir.name,
+                        "title": ingest_data.get("title") or "Unknown Upload",
+                        "job_id": job_dir.name,
+                    })
+                except Exception:
+                    pass
     return videos
 
 
@@ -496,8 +518,8 @@ def _get_or_create_job_for_queue(body: dict):
     settings = config.Settings()
     
     # Do we have an existing job for this video?
-    job_id = None
-    if campaign_id:
+    job_id = body.get("job_id")
+    if not job_id and campaign_id and campaign_id != "standalone":
         cvs = store.campaign_videos(campaign_id)
         for cv in cvs:
             if cv["video_url"] == video_url:

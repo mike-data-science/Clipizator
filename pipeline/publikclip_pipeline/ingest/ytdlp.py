@@ -207,7 +207,8 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
             "-J", 
             "--no-playlist", 
             "--no-warnings",
-            "--proxy", "socks5://127.0.0.1:1080"
+            "--proxy", "socks5://127.0.0.1:1080",
+            "--extractor-args", "youtube:player_client=android"
         ]
         repo_root = Path(__file__).resolve().parent.parent.parent.parent
         cookies_path = repo_root / "cookies.txt"
@@ -274,7 +275,8 @@ def download(url: str, out_path: Path, progress: ProgressFn) -> None:
         "--no-playlist",
         "--no-warnings",
         "--newline",
-        "--proxy", "socks5://127.0.0.1:1080"
+        "--proxy", "socks5://127.0.0.1:1080",
+        "--extractor-args", "youtube:player_client=android"
     ]
     if ffmpeg:
         args.extend(["--ffmpeg-location", ffmpeg])
