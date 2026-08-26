@@ -93,3 +93,70 @@ def similarity_score(moment_text: str, top_clips_texts: list[str]) -> float:
             max_sim = sim
             
     return round(max_sim, 3)
+
+
+def find_clip_in_transcript(clip_text: str, transcript_segments: list[dict]) -> dict | None:
+    """Finds the best matching window in the transcript for a given clip text.
+    Returns {"start": float, "end": float, "matched_text": str, "score": float} or None.
+    """
+    if not clip_text or not transcript_segments:
+        return None
+        
+    clip_tokens = _tokenize(clip_text)
+    if not clip_tokens:
+        return None
+        
+    best_score = 0.0
+    best_match = None
+    
+    # Flatten transcript to word-level for easier matching
+    flat_words = []
+    for seg in transcript_segments:
+        words = seg.get("words", [])
+        if words:
+            flat_words.extend(words)
+        else:
+            # Fallback if no word-level timestamps, just use segment
+            for token in _tokenize(seg.get("text", "")):
+                flat_words.append({
+                    "word": token, 
+                    "start": seg.get("start", 0), 
+                    "end": seg.get("end", 0)
+                })
+                
+    if not flat_words:
+        return None
+        
+    window_size = len(clip_tokens)
+    if window_size == 0:
+        return None
+        
+    model = TfIdfModel([clip_text] + [" ".join(w.get("word", "") for w in flat_words)])
+    clip_vec = model.vectorize(clip_text)
+
+    # Slide window
+    step = max(1, window_size // 4)
+    
+    for i in range(0, len(flat_words), step):
+        window = flat_words[i : i + window_size + 15] # add a buffer
+        if not window:
+            continue
+            
+        window_text = " ".join(w.get("word", "") for w in window)
+        window_vec = model.vectorize(window_text)
+        score = _cosine_similarity(clip_vec, window_vec)
+        
+        if score > best_score:
+            best_score = score
+            best_match = {
+                "start": window[0].get("start", 0),
+                "end": window[-1].get("end", 0),
+                "matched_text": window_text,
+                "score": score
+            }
+            
+    # Threshold for a "match". TF-IDF cosine sim can be relatively low if clip text has noise
+    if best_score > 0.15:
+        return best_match
+    return None
+

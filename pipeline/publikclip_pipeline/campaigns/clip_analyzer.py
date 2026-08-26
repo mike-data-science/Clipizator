@@ -213,6 +213,9 @@ def analyze_clip(
     clip_url: str,
     role: str = "competitor",
     progress: ProgressFn | None = None,
+    settings: dict | None = None,
+    pre_downloaded_video: Path | None = None,
+    pre_fetched_meta: dict | None = None,
 ) -> dict:
     """Full extraction pipeline for a single short-form clip.
 
@@ -224,9 +227,21 @@ def analyze_clip(
     work_dir = config.jobs_dir() / campaign_id / "clip_analysis"
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Fetch metadata
-    emit(0.05, "Fetching clip metadata…")
-    meta = _fetch_clip_meta(clip_url, emit)
+    # Determine settings
+    if settings is None:
+        settings = {"download": True, "transcribe": True, "analyze": True}
+        
+    do_download = settings.get("download", True)
+    do_transcribe = settings.get("transcribe", True)
+    do_analyze = settings.get("analyze", True)
+
+    # 1. Fetch metadata (or use pre-fetched)
+    if pre_fetched_meta:
+        emit(0.05, "Using pre-fetched metadata from worker…")
+        meta = pre_fetched_meta
+    else:
+        emit(0.05, "Fetching clip metadata…")
+        meta = _fetch_clip_meta(clip_url, emit)
 
     title = meta.get("title", "")
     channel = meta.get("channel") or meta.get("uploader") or ""
@@ -236,36 +251,47 @@ def analyze_clip(
     channel_subs = meta.get("channel_follower_count")
     thumbnail_url = meta.get("thumbnail") or ""
 
-    # 2. Download video
-    emit(0.1, "Downloading clip…")
     video_file = work_dir / f"clip_{meta.get('id', 'video')}.mp4"
-    if not video_file.exists():
-        _download_clip(clip_url, video_file, emit)
-
-    # 3. Capture frame at t=1.5s for OCR
-    emit(0.3, "Capturing frame for hook text detection…")
     frame_path = work_dir / f"frame_{meta.get('id', 'video')}.jpg"
-    _capture_frame(video_file, 1.5, frame_path)
+
+    # 2. Download video (or use pre-downloaded)
+    if pre_downloaded_video and pre_downloaded_video.exists():
+        emit(0.1, "Using pre-downloaded video from worker…")
+        if pre_downloaded_video != video_file:
+            shutil.copy2(pre_downloaded_video, video_file)
+    elif do_download:
+        emit(0.1, "Downloading clip…")
+        if not video_file.exists():
+            _download_clip(clip_url, video_file, emit)
+
+    # 3. Capture frame at t=1.5s for thumbnail & OCR
+    if video_file.exists():
+        emit(0.3, "Capturing frame for thumbnail…")
+        _capture_frame(video_file, 1.5, frame_path)
 
     # 4. OCR on top half of frame
     visual_hook = ""
-    if frame_path.exists():
+    if do_analyze and frame_path.exists():
         emit(0.35, "Running OCR for visual hook text…")
         visual_hook = _ocr_top_half(frame_path)
 
     # 5. Transcribe audio
-    emit(0.4, "Transcribing audio…")
-    words = _transcribe_clip(video_file, emit)
+    words = []
+    audio_hook = ""
+    full_transcript = ""
+    if do_transcribe and do_download and video_file.exists():
+        emit(0.4, "Transcribing audio…")
+        words = _transcribe_clip(video_file, emit)
 
-    # 6. Extract audio hook (first 5s)
-    audio_hook = _extract_audio_hook(words, max_sec=5.0)
+        # 6. Extract audio hook (first 5s)
+        audio_hook = _extract_audio_hook(words, max_sec=5.0)
 
-    # Full transcript text
-    full_transcript = " ".join(w["word"] for w in words)
+        # Full transcript text
+        full_transcript = " ".join(w["word"] for w in words)
 
-    # 7. Save thumbnail
-    thumbnail_path = None
-    if frame_path.exists():
+    # 7. Save thumbnail (prioritize real URL if available)
+    thumbnail_path = thumbnail_url
+    if not thumbnail_path and frame_path.exists():
         thumb_dest = config.home_dir() / "campaigns" / campaign_id / "thumbs"
         thumb_dest.mkdir(parents=True, exist_ok=True)
         final_thumb = thumb_dest / f"{meta.get('id', 'thumb')}.jpg"

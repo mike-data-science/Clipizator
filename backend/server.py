@@ -15,10 +15,11 @@ import sys
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 # ---- resolve the pipeline package ------------------------------------------
 # The pipeline lives at ../pipeline relative to this file. Add it to sys.path
@@ -57,6 +58,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---- Worker Queue -----------------------------------------------------------
+WORKER_QUEUE = []  # In-memory queue for laptop download worker
+
 
 # ---- WebSocket hub for pipeline events ------------------------------------
 _ws_clients: set[WebSocket] = set()
@@ -871,12 +876,48 @@ def delete_campaign_clip(campaign_id: str, clip_id: int):
 @app.post("/api/campaigns/{campaign_id}/clips/analyze")
 def api_analyze_clip(campaign_id: str, body: dict):
     from publikclip_pipeline.campaigns import clip_analyzer, store
+    import sqlite3
     url = body.get("url")
     role = body.get("role", "competitor")
+    settings = body.get("settings", {"download": True, "transcribe": True, "analyze": True})
     if not url:
         raise HTTPException(400, "url required")
         
+    # Insert placeholder so it appears in UI immediately
+    try:
+        placeholder = store.add_clip(
+            campaign_id, role,
+            clip_url=url,
+            title="Processing...",
+            thumbnail_path=""
+        )
+        clip_id = placeholder["id"]
+    except sqlite3.IntegrityError:
+        raise HTTPException(400, "Clip is already added or processing")
+        
+    use_worker = settings.get("use_worker", True)  # Route everything to the unblockable laptop worker by default
+    
+    if use_worker:
+        # Add to the global worker queue instead of running yt-dlp immediately
+        WORKER_QUEUE.append({
+            "campaign_id": campaign_id,
+            "clip_id": clip_id,
+            "url": url,
+            "role": role,
+            "settings": settings
+        })
+        _broadcast_sync({
+            "event": "result",
+            "ok": True,
+            "stage": "worker_queued",
+            "campaign_id": campaign_id,
+            "url": url,
+            "message": "Sent to laptop worker queue"
+        })
+        return {"ok": True, "message": "Queued for remote worker"}
+        
     def _do_analyze():
+        print(f"[_do_analyze] Starting analysis for {url} (campaign: {campaign_id})")
         def emit(fraction: float, message: str):
             _broadcast_sync({
                 "event": "progress",
@@ -888,17 +929,30 @@ def api_analyze_clip(campaign_id: str, body: dict):
             })
             
         try:
-            result = clip_analyzer.analyze_clip(campaign_id, url, role, emit)
-            clip = store.add_clip_from_analysis(campaign_id, result)
+            result = clip_analyzer.analyze_clip(campaign_id, url, role, emit, settings=settings)
+            
+            # Remove keys that shouldn't be updated or are managed by update_clip
+            update_data = {k: v for k, v in result.items() if k not in ("campaign_id", "role") and v is not None}
+            store.update_clip(clip_id, **update_data)
+            
+            # Fetch the final updated clip
+            final_clip = next((c for c in store.campaign_clips(campaign_id) if c["id"] == clip_id), None)
+            
+            print(f"[_do_analyze] Successfully updated clip ID: {clip_id}")
             _broadcast_sync({
                 "event": "result",
                 "ok": True,
                 "stage": "clip_analysis",
                 "campaign_id": campaign_id,
                 "url": url,
-                "clip": clip,
+                "clip": final_clip,
             })
         except Exception as err:
+            print(f"[_do_analyze] Exception occurred: {err}")
+            import traceback
+            traceback.print_exc()
+            # Remove the placeholder on failure
+            store.delete_clip(clip_id)
             _broadcast_sync({
                 "event": "result",
                 "ok": False,
@@ -909,6 +963,15 @@ def api_analyze_clip(campaign_id: str, body: dict):
             })
             
     threading.Thread(target=_do_analyze, daemon=True).start()
+    
+    # Broadcast an immediate event so the UI refreshes and shows the placeholder
+    _broadcast_sync({
+        "event": "result",
+        "ok": True,
+        "stage": "clip_analysis_started",
+        "campaign_id": campaign_id,
+    })
+    
     return {"ok": True, "message": "Analysis started"}
 
 @app.post("/api/campaigns/{campaign_id}/clips/import-csv")
@@ -1111,6 +1174,244 @@ def get_campaign_insights(campaign_id: str):
     return {"feature_weights": weights}
 
 
+@app.get("/api/campaigns/{campaign_id}/analyzer/video-ranking")
+def get_video_ranking(campaign_id: str):
+    from publikclip_pipeline.campaigns import store
+    moments = store.campaign_moments(campaign_id, unclipped_only=False)
+    
+    videos = {}
+    for m in moments:
+        v = m.get("video_url")
+        if not v:
+            continue
+        if v not in videos:
+            videos[v] = {"video_url": v, "clip_potential": 0, "total_score": 0.0}
+        
+        score = m.get("recommendation_score", 0)
+        # Threshold to be considered a "high potential" clip
+        if score > 0.6:
+            videos[v]["clip_potential"] += 1
+        videos[v]["total_score"] += score
+        
+    ranking = list(videos.values())
+    ranking.sort(key=lambda x: (x["clip_potential"], x["total_score"]), reverse=True)
+    return ranking
+
+class ImproveHookRequest(BaseModel):
+    matched_transcript: str
+    competitor_visual_hook: str
+
+@app.post("/api/campaigns/{campaign_id}/analyzer/improve-hook")
+def improve_hook(campaign_id: str, req: ImproveHookRequest):
+    from publikclip_pipeline.scoring import llm as llm_mod
+    client = llm_mod.make_client()
+    
+    prompt = f"""
+You are an expert short-form video strategist and copywriter.
+A competitor had a highly successful clip with the following transcript:
+"{req.matched_transcript}"
+
+And they used this visual hook (on-screen text):
+"{req.competitor_visual_hook or 'None'}"
+
+Your task is to reframe this idea. Provide 3 completely fresh, highly engaging visual text hooks, and 3 audio hooks (the spoken first sentence) that capture the same psychology and audience interest, but in our own unique words so we don't plagiarize. Keep them punchy and under 10 words.
+
+Return JSON in this format exactly:
+{{
+  "visual_hooks": ["...", "...", "..."],
+  "audio_hooks": ["...", "...", "..."]
+}}
+"""
+    schema = {
+        "type": "object",
+        "properties": {
+            "visual_hooks": {"type": "array", "items": {"type": "string"}},
+            "audio_hooks": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["visual_hooks", "audio_hooks"]
+    }
+    
+    result = client.generate_json(prompt, schema)
+    return result
+
+class HashtagSearchRequest(BaseModel):
+    hashtag: str
+
+@app.post("/api/campaigns/{campaign_id}/hashtag-search")
+def hashtag_search(campaign_id: str, req: HashtagSearchRequest):
+    import subprocess
+    from publikclip_pipeline import config
+    
+    # We will run a background thread to fetch yt-dlp search and then add videos to campaign
+    def _search_and_add():
+        bin_path = config.bin_dir() / ("yt-dlp.exe" if sys.platform == "win32" else "yt-dlp_macos" if sys.platform == "darwin" else "yt-dlp_linux")
+        search_query = f"ytsearch5:#{req.hashtag.replace('#', '')}"
+        
+        try:
+            out = subprocess.run(
+                [str(bin_path), "-J", "--flat-playlist", search_query],
+                capture_output=True, text=True, check=True
+            )
+            data = json.loads(out.stdout)
+            entries = data.get("entries", [])
+            urls = []
+            for e in entries:
+                if e.get("url"):
+                    urls.append(e["url"])
+            
+            # Now add them as competitor clips
+            for url in urls:
+                try:
+                    from publikclip_pipeline.campaigns import store
+                    # ensure it's in the DB
+                    if not store.campaign_videos(campaign_id):
+                        pass # just referencing the DB
+                    
+                    queue.enqueue(
+                        job_type="analyze_clip",
+                        payload={
+                            "campaign_id": campaign_id,
+                            "clip_url": url,
+                            "role": "competitor"
+                        }
+                    )
+                except Exception as e:
+                    print(f"Error adding hashtag clip {url}: {e}")
+                    
+        except Exception as e:
+            print(f"Hashtag search failed: {e}")
+
+    threading.Thread(target=_search_and_add, daemon=True).start()
+    return {"ok": True, "message": "Search started in background."}
+
+class IgConnectRequest(BaseModel):
+    app_id: str
+    app_secret: str
+    
+@app.post("/api/instagram/connect")
+def ig_connect(req: IgConnectRequest):
+    from publikclip_pipeline.insights import instagram
+    try:
+        # We run this synchronously; it opens browser and waits
+        conn = instagram.connect(req.app_id, req.app_secret, open_browser=True)
+        return {"ok": True, "username": conn.get("username")}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/instagram/overview")
+def ig_overview():
+    from publikclip_pipeline.insights import instagram
+    conn = instagram.load_connection()
+    if not conn:
+        return {"connected": False}
+    
+    conn = instagram.refresh_if_needed(conn)
+    try:
+        media = instagram.recent_media(conn, limit=10)
+        clips = []
+        for m in media:
+            try:
+                insights = instagram.media_insights(conn, m["id"])
+                clips.append({
+                    "id": m["id"],
+                    "thumbnail": m.get("thumbnail_url"),
+                    "views": insights.get("views", 0),
+                    "likes": insights.get("likes", 0),
+                    "reach": insights.get("reach", 0),
+                    "permalink": m.get("permalink")
+                })
+            except Exception:
+                pass
+        return {"connected": True, "username": conn.get("username"), "clips": clips}
+    except Exception as e:
+        return {"connected": True, "error": str(e)}
+
+@app.get("/api/campaigns/{campaign_id}/analyzer/hook-recommendations")
+def get_hook_recommendations(campaign_id: str):
+    from publikclip_pipeline.campaigns import store
+    clips = store.campaign_clips(campaign_id)
+    
+    visual_success = 0
+    audio_success = 0
+    total = 0
+    
+    for c in clips:
+        if c.get("role") != "competitor":
+            continue
+        
+        v = c.get("views") or 0
+        if v > 1000:
+            total += 1
+            if c.get("hook_text_overlay"):
+                visual_success += 1
+            if c.get("audio_hook"):
+                audio_success += 1
+                
+    if total == 0:
+        return {
+            "recommendation": "Not enough competitor data yet to recommend a hook strategy.", 
+            "visual_score": 0, 
+            "audio_score": 0
+        }
+        
+    visual_ratio = visual_success / total
+    audio_ratio = audio_success / total
+    
+    if visual_ratio > audio_ratio and visual_ratio > 0.5:
+        rec = "Visual hooks (on-screen text) are performing strongly for competitors in this niche. We highly recommend adding constant text hooks (detected via Tesseract) in the first 3 seconds."
+    elif audio_ratio > visual_ratio and audio_ratio > 0.5:
+        rec = "Audio hooks (strong spoken first 3 seconds) are driving retention for competitors. Focus on script writing and verbal delivery over text."
+    else:
+        rec = "Both visual and audio hooks are showing similar success. Use a strong combination of spoken hooks + text overlays."
+        
+    return {
+        "recommendation": rec,
+        "visual_score": round(visual_ratio * 100),
+        "audio_score": round(audio_ratio * 100)
+    }
+
+
+@app.get("/api/campaigns/{campaign_id}/competitor-matches")
+def get_competitor_matches(campaign_id: str, video_url: str):
+    from publikclip_pipeline.campaigns import store, similarity
+    
+    transcripts = store.campaign_transcripts(campaign_id)
+    source_t = None
+    for t in transcripts:
+        if t["video_url"] == video_url:
+            source_t = t["transcript"]
+            break
+            
+    if not source_t:
+        return []
+        
+    clips = store.campaign_clips(campaign_id)
+    matches = []
+    
+    for c in clips:
+        if c.get("role") != "competitor":
+            continue
+            
+        clip_text = c.get("transcript_excerpt") or c.get("audio_hook") or c.get("hook_text_overlay")
+        if not clip_text:
+            continue
+            
+        match = similarity.find_clip_in_transcript(clip_text, source_t)
+        if match:
+            matches.append({
+                "clip_url": c.get("clip_url"),
+                "competitor_text": clip_text,
+                "visual_hook": c.get("hook_text_overlay"),
+                "matched_in_video": match["matched_text"],
+                "start_sec": match["start"],
+                "end_sec": match["end"],
+                "confidence": match["score"],
+            })
+            
+    matches.sort(key=lambda x: x["start_sec"])
+    return matches
+
+
 # -- Media file serving ------------------------------------------------------
 
 # This replaces Tauri's convertFileSrc().
@@ -1158,3 +1459,89 @@ async def custom_404_handler(request, exc):
         return FileResponse(index)
         
     return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+# ---- Worker API Endpoints ---------------------------------------------------
+
+@app.get("/api/worker/jobs")
+def get_worker_jobs():
+    """Return all pending jobs and clear the queue."""
+    global WORKER_QUEUE
+    jobs = list(WORKER_QUEUE)
+    WORKER_QUEUE.clear()
+    return {"jobs": jobs}
+
+@app.post("/api/worker/upload/{campaign_id}/{clip_id}")
+async def worker_upload(
+    campaign_id: str, 
+    clip_id: str, 
+    video: UploadFile = File(...), 
+    metadata: UploadFile = File(...),
+    role: str = Form("competitor")
+):
+    """Receive downloaded video and metadata from the laptop worker, and resume analysis."""
+    meta_content = await metadata.read()
+    meta_json = json.loads(meta_content.decode("utf-8"))
+    
+    work_dir = config.jobs_dir() / campaign_id / "clip_analysis"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    
+    video_path = work_dir / f"clip_{meta_json.get('id', clip_id)}.mp4"
+    
+    with open(video_path, "wb") as f:
+        f.write(await video.read())
+        
+    def _resume_analyze():
+        print(f"[_resume_analyze] Resuming analysis for {campaign_id} / {clip_id}")
+        url = meta_json.get("webpage_url", "")
+        def emit(fraction: float, message: str):
+            _broadcast_sync({
+                "event": "progress",
+                "stage": "clip_analysis",
+                "campaign_id": campaign_id,
+                "url": url,
+                "fraction": fraction,
+                "message": message
+            })
+            
+        try:
+            from publikclip_pipeline.campaigns import clip_analyzer
+            result = clip_analyzer.analyze_clip(
+                campaign_id, 
+                url, 
+                role, 
+                emit, 
+                settings={"download": False, "transcribe": True, "analyze": True},
+                pre_downloaded_video=video_path,
+                pre_fetched_meta=meta_json
+            )
+            
+            update_data = {k: v for k, v in result.items() if k not in ("campaign_id", "role") and v is not None}
+            from publikclip_pipeline.campaigns import store
+            store.update_clip(clip_id, **update_data)
+            
+            final_clip = next((c for c in store.campaign_clips(campaign_id) if c["id"] == clip_id), None)
+            
+            _broadcast_sync({
+                "event": "result",
+                "ok": True,
+                "stage": "clip_analysis",
+                "campaign_id": campaign_id,
+                "url": url,
+                "clip": final_clip,
+            })
+        except Exception as err:
+            import traceback
+            traceback.print_exc()
+            from publikclip_pipeline.campaigns import store
+            store.delete_clip(clip_id)
+            _broadcast_sync({
+                "event": "result",
+                "ok": False,
+                "stage": "clip_analysis",
+                "campaign_id": campaign_id,
+                "url": url,
+                "error": str(err)
+            })
+            
+    threading.Thread(target=_resume_analyze, daemon=True).start()
+    return {"ok": True}

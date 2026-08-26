@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS campaign_clips (
     -- Posted clip info
     clip_url TEXT,
     title TEXT,
+    channel TEXT,
     platform TEXT DEFAULT 'youtube',
     posted_at REAL,
     -- Clip text
@@ -180,6 +181,13 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(config.db_path(), timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    
+    # Auto-migrations for schema changes
+    try:
+        conn.execute("ALTER TABLE campaign_clips ADD COLUMN channel TEXT;")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+        
     # Run migrations (ignore if column already exists)
     for stmt in _MIGRATIONS:
         try:
@@ -364,7 +372,24 @@ def campaign_videos(campaign_id: str) -> list[dict]:
 # ---- Clips ------------------------------------------------------------------
 
 
-def add_clip(campaign_id: str, role: str, **kwargs) -> dict:
+CLIP_FIELDS = [
+    "job_id", "clip_index", "source_video_url", "clip_url", "title", "channel",
+    "platform", "posted_at",
+    "hook_text", "hook_type", "hook_template", "transcript_excerpt",
+    "start_sec", "end_sec", "duration_sec",
+    "views", "likes", "comments", "shares",
+    "watch_time_pct", "avg_view_duration_sec", "ctr", "impressions",
+    "retention_3s", "retention_5s", "swipe_away_pct",
+    "channel_subscribers", "views_per_subscriber",
+    "predicted_score", "hook_score", "funniness_score",
+    "shock_score", "curiosity_score", "value_score",
+    "notes", "raw_metrics_json", "updated_at",
+    "thumbnail_path", "hook_text_overlay", "audio_hook",
+    "audio_transcript_json", "traffic_source",
+]
+
+
+def add_clip(campaign_id: str, role: str = "mine", **kwargs) -> dict:
     """Add a tracked clip (mine or competitor)."""
     now = time.time()
     # Compute views_per_subscriber if both values present
@@ -374,32 +399,17 @@ def add_clip(campaign_id: str, role: str, **kwargs) -> dict:
     if views is not None and subs and subs > 0:
         vps = round(views / subs, 6)
 
-    fields = [
-        "campaign_id", "role", "job_id", "clip_index", "source_video_url",
-        "clip_url", "title", "platform", "posted_at",
-        "hook_text", "hook_type", "hook_template", "transcript_excerpt",
-        "start_sec", "end_sec", "duration_sec",
-        "views", "likes", "comments", "shares",
-        "watch_time_pct", "avg_view_duration_sec", "ctr", "impressions",
-        "retention_3s", "retention_5s", "swipe_away_pct",
-        "channel_subscribers", "views_per_subscriber",
-        "predicted_score", "hook_score", "funniness_score",
-        "shock_score", "curiosity_score", "value_score",
-        "notes", "raw_metrics_json", "updated_at",
-        "thumbnail_path", "hook_text_overlay", "audio_hook",
-        "audio_transcript_json", "traffic_source",
-    ]
     vals = {
         "campaign_id": campaign_id,
         "role": role,
         "views_per_subscriber": vps,
         "updated_at": now,
     }
-    for f in fields:
+    for f in CLIP_FIELDS:
         if f not in vals and f in kwargs:
             vals[f] = kwargs[f]
 
-    present_fields = [f for f in fields if f in vals]
+    present_fields = [f for f in CLIP_FIELDS + ["campaign_id", "role"] if f in vals]
     placeholders = ", ".join("?" for _ in present_fields)
     col_list = ", ".join(present_fields)
     values = [vals[f] for f in present_fields]
@@ -440,8 +450,14 @@ def update_clip(clip_id: int, **kwargs) -> bool:
                 kwargs["views_per_subscriber"] = round(views / subs, 6)
 
     kwargs["updated_at"] = time.time()
-    sets = ", ".join(f"{k} = ?" for k in kwargs)
-    vals = list(kwargs.values()) + [clip_id]
+    
+    # Filter kwargs to only valid fields
+    valid_kwargs = {k: v for k, v in kwargs.items() if k in CLIP_FIELDS}
+    if not valid_kwargs:
+        return False
+        
+    sets = ", ".join(f"{k} = ?" for k in valid_kwargs)
+    vals = list(valid_kwargs.values()) + [clip_id]
     with _connect() as conn:
         cur = conn.execute(
             f"UPDATE campaign_clips SET {sets} WHERE id = ?", vals
