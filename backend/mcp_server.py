@@ -14,7 +14,9 @@ mcp = FastMCP("PublikClip Scorer")
 @mcp.tool()
 def get_pending_scoring_tasks(campaign_id: str) -> str:
     """Returns a JSON string of candidate moments that need LLM scoring for a given campaign."""
-    pending_file = config.jobs_dir() / campaign_id / "pending_scoring.json"
+    from publikclip_pipeline.campaigns import store
+    campaign_dir = store.get_campaign_dir(campaign_id)
+    pending_file = config.jobs_dir() / campaign_dir / "pending_scoring.json"
     if not pending_file.exists():
         return json.dumps({"status": "error", "message": "No pending tasks found. Run prepare_analysis first."})
     

@@ -180,7 +180,8 @@ def prepare_analysis(
     from pathlib import Path
     from . import config
     
-    pending_dir = config.jobs_dir() / campaign_id
+    campaign_dir = store.get_campaign_dir(campaign_id)
+    pending_dir = config.jobs_dir() / campaign_dir
     pending_dir.mkdir(parents=True, exist_ok=True)
     pending_file = pending_dir / "pending_scoring.json"
     
@@ -241,7 +242,8 @@ def complete_analysis(
     
     # Cleanup pending file
     from . import config
-    pending_file = config.jobs_dir() / campaign_id / "pending_scoring.json"
+    campaign_dir = store.get_campaign_dir(campaign_id)
+    pending_file = config.jobs_dir() / campaign_dir / "pending_scoring.json"
     if pending_file.exists():
         pending_file.unlink()
         

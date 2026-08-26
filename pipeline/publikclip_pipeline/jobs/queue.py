@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     title TEXT,
     status TEXT NOT NULL DEFAULT 'pending',  -- pending|running|done|failed
     error TEXT,
-    settings_json TEXT NOT NULL
+    settings_json TEXT NOT NULL,
+    campaign_dir TEXT
 );
 CREATE TABLE IF NOT EXISTS stage_runs (
     job_id TEXT NOT NULL,
@@ -59,10 +60,14 @@ class Job:
     status: str
     error: str | None
     settings_json: str
+    campaign_dir: str | None = None
 
     @property
     def dir(self) -> Path:
-        return config.jobs_dir() / self.id
+        base = config.jobs_dir()
+        if self.campaign_dir:
+            base = base / self.campaign_dir
+        return base / self.id
 
 
 def _connect() -> sqlite3.Connection:
@@ -83,18 +88,24 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         status=row["status"],
         error=row["error"],
         settings_json=row["settings_json"],
+        campaign_dir=row["campaign_dir"] if "campaign_dir" in row.keys() else None,
     )
 
 
-def create_job(source_type: str, source: str, settings_json: str) -> Job:
+def create_job(source_type: str, source: str, settings_json: str, campaign_dir: str | None = None) -> Job:
     if source_type not in ("url", "file"):
         raise ValueError(f"bad source_type {source_type!r}")
     job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     with _connect() as conn:
+        try:
+            conn.execute("ALTER TABLE jobs ADD COLUMN campaign_dir TEXT")
+        except sqlite3.OperationalError:
+            pass
+            
         conn.execute(
-            "INSERT INTO jobs (id, created_at, source_type, source, status, settings_json)"
-            " VALUES (?, ?, ?, ?, 'pending', ?)",
-            (job_id, time.time(), source_type, source, settings_json),
+            "INSERT INTO jobs (id, created_at, source_type, source, status, settings_json, campaign_dir)"
+            " VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+            (job_id, time.time(), source_type, source, settings_json, campaign_dir),
         )
     job = get_job(job_id)
     assert job is not None

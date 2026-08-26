@@ -52,12 +52,13 @@ def arousal_curve_ser(
         import torch
         from speechbrain.inference.interfaces import foreign_class
 
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
         classifier = foreign_class(
             source=SER_REPO,
             pymodule_file="custom_interface.py",
             classname="CustomEncoderWav2vec2Classifier",
             savedir=cache_dir,
-            run_opts={"device": "cpu"},
+            run_opts={"device": device},
         )
     except Exception:  # noqa: BLE001 — any load failure → DSP fallback
         return None
@@ -88,10 +89,19 @@ def arousal_curve_ser(
     curve = np.divide(acc, weight, out=np.full(n_bins, np.nan), where=weight > 0)
     # Fill non-speech bins by interpolation so consumers get a dense curve.
     if np.all(np.isnan(curve)):
-        return None
-    idx = np.arange(n_bins)
-    good = ~np.isnan(curve)
-    return np.interp(idx, idx[good], curve[good])
+        result = None
+    else:
+        idx = np.arange(n_bins)
+        good = ~np.isnan(curve)
+        result = np.interp(idx, idx[good], curve[good])
+    
+    del classifier
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        
+    return result
 
 
 def arousal_curve_dsp(dynamics: list[float], dynamics_grid_sec: float) -> np.ndarray:

@@ -247,6 +247,24 @@ def list_campaigns() -> list[dict]:
     ]
 
 
+def get_campaign_basic(campaign_id: str) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+    if row:
+        return dict(row)
+    return None
+
+
+def get_campaign_dir(campaign_id: str) -> str:
+    """Returns the unified folder name for a campaign, e.g. lovable_72596e06"""
+    import re
+    campaign = get_campaign_basic(campaign_id)
+    if campaign:
+        safe_name = re.sub(r'[^a-zA-Z0-9]+', '_', campaign["name"]).strip('_').lower()
+        return f"{safe_name}_{campaign_id}"
+    return campaign_id
+
+
 def get_campaign(campaign_id: str) -> dict | None:
     with _connect() as conn:
         row = conn.execute(

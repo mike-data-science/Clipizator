@@ -48,6 +48,23 @@ def videotoolbox_available() -> bool:
     return _vt_checked
 
 
+_nvenc_checked: bool | None = None
+
+def nvenc_available() -> bool:
+    """Probe once: encode 0.2 s of black through h264_nvenc."""
+    global _nvenc_checked
+    if _nvenc_checked is None:
+        proc = subprocess.run(
+            [
+                ffmpeg_bin.ffmpeg(), "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:d=0.2",
+                "-c:v", "h264_nvenc", "-f", "null", "-",
+            ],
+            capture_output=True, timeout=60,
+        )
+        _nvenc_checked = proc.returncode == 0
+    return _nvenc_checked
+
+
 def crop_boxes(frames: list[list[float]], src_w: int, src_h: int) -> list[tuple[int, int, int, int]]:
     """Director frames [x, y, w, h] → even-int (w, h, x, y) crop boxes,
     clamped in-bounds (openshorts crop_boxes rounding rules)."""
@@ -134,7 +151,9 @@ def render_clip(
             sub += f":fontsdir={_q(fonts_dir)}"
         vf_parts.append(sub)
 
-    if videotoolbox_available():
+    if nvenc_available():
+        vcodec = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", str(X264_CRF)]
+    elif videotoolbox_available():
         vcodec = ["-c:v", "h264_videotoolbox", "-b:v", VT_BITRATE, "-allow_sw", "1"]
     else:
         vcodec = ["-c:v", "libx264", "-preset", "medium", "-crf", str(X264_CRF)]

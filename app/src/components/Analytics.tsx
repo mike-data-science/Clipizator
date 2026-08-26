@@ -25,6 +25,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
     analyze: true
   })
   const [selectedClip, setSelectedClip] = useState<any>(null)
+  const [selectedVideo, setSelectedVideo] = useState<any>(null)
   
   // Video filter state
   const [videoFilter, setVideoFilter] = useState<'all' | 'source' | 'mine' | 'competitor'>('all')
@@ -787,7 +788,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
                       key={`v-${v.id}`}
                       className="glass-panel"
                       onClick={() => {
-                        if (onSendToStudio && v.has_ingest && v.has_asr) onSendToStudio(v.video_url);
+                        setSelectedVideo(v);
                       }}
                       style={{
                         borderRadius: '16px',
@@ -1050,6 +1051,73 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Selected Video Modal */}
+      {selectedVideo && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setSelectedVideo(null)}>
+          <div className="glass-panel" style={{ width: '600px', maxWidth: '90vw', maxHeight: '90vh', overflowY: 'auto', borderRadius: '16px', padding: '24px' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div style={{ background: 'rgba(255,255,255,0.1)', color: 'var(--text)', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' }}>
+                Video Info
+              </div>
+              <button onClick={() => setSelectedVideo(null)} style={{ background: 'none', border: 'none', color: 'var(--dim)', fontSize: '24px', cursor: 'pointer' }}>×</button>
+            </div>
+            
+            <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--text)', marginBottom: '8px' }}>{selectedVideo.title || selectedVideo.video_url}</h2>
+            <div style={{ fontSize: '14px', color: 'var(--dim)', marginBottom: '16px' }}>{selectedVideo.channel || 'Unknown Channel'}</div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '24px', background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px' }}>
+              {selectedVideo.duration_sec && (
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Duration</div>
+                  <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>{Math.floor(selectedVideo.duration_sec / 60)}:{(selectedVideo.duration_sec % 60).toString().padStart(2, '0')}</div>
+                </div>
+              )}
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Processing Status</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: (selectedVideo.has_ingest && selectedVideo.has_asr) ? 'var(--green)' : 'var(--amber)' }}>
+                  {(selectedVideo.has_ingest && selectedVideo.has_asr) ? 'Ready for Studio' : 'Processing...'}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '16px', marginTop: '32px', paddingTop: '16px', borderTop: '1px solid var(--glass-border)' }}>
+              <a 
+                href={selectedVideo.video_url} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                style={{ flex: 1, textAlign: 'center', padding: '12px 16px', background: 'rgba(255,255,255,0.1)', color: 'var(--text)', borderRadius: '8px', textDecoration: 'none', fontSize: '13px', fontWeight: 600 }}
+              >
+                Open Source URL ↗
+              </a>
+              
+              {selectedVideo.has_asr && selectedVideo.job_id && (
+                <a 
+                  href={`/media/jobs/${selectedVideo.job_id}/asr.json`} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  style={{ flex: 1, textAlign: 'center', padding: '12px 16px', background: 'rgba(100,200,255,0.1)', color: '#64c8ff', border: '1px solid rgba(100,200,255,0.4)', borderRadius: '8px', textDecoration: 'none', fontSize: '13px', fontWeight: 600 }}
+                >
+                  View Transcript 📄
+                </a>
+              )}
+              
+              <button 
+                onClick={() => {
+                  if (onSendToStudio && selectedVideo.has_ingest && selectedVideo.has_asr) {
+                    onSendToStudio(selectedVideo.video_url);
+                    setSelectedVideo(null);
+                  }
+                }}
+                disabled={!(selectedVideo.has_ingest && selectedVideo.has_asr)}
+                style={{ flex: 1, padding: '12px 16px', background: 'rgba(61, 214, 163, 0.2)', color: 'var(--green)', border: '1px solid rgba(61, 214, 163, 0.4)', borderRadius: '8px', cursor: (selectedVideo.has_ingest && selectedVideo.has_asr) ? 'pointer' : 'not-allowed', fontSize: '13px', fontWeight: 600, opacity: (selectedVideo.has_ingest && selectedVideo.has_asr) ? 1 : 0.5 }}
+              >
+                Go to Studio ✂️
+              </button>
+            </div>
           </div>
         </div>
       )}

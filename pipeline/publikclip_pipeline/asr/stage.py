@@ -125,6 +125,8 @@ class AsrStage(Stage):
         gc.collect()
         if hasattr(torch, "mps") and torch.backends.mps.is_available():
             torch.mps.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         segments = []
         for seg in aligned["segments"]:

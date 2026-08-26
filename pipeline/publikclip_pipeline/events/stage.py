@@ -73,7 +73,7 @@ class EventsStage(Stage):
         from ..vendor.panns import models as panns_models
         from . import dsp, panns_channel, post
 
-        device = torch.device("cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         bench: dict[str, float] = {}
         events: list[dict] = []
 
@@ -122,6 +122,10 @@ class EventsStage(Stage):
             progress=lambda f: ctx.emit(0.45 + f * 0.35, "Detecting audio events…"),
         )
         del pmodel
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         for etype, probs in probs_by_type.items():
             enter, stay = panns_channel.THRESHOLDS.get(etype, (0.15, 0.08))
             for start, end, peak in post.postprocess(probs, fps, enter=enter, stay=stay):

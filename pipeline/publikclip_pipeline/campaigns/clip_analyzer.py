@@ -156,7 +156,8 @@ def _transcribe_clip(video_path: Path, progress: ProgressFn) -> list[dict]:
         progress(-1, "WhisperX not available — skipping audio transcript")
         return []
 
-    device = "cpu"
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     compute_type = "int8"
     if torch.cuda.is_available():
         device = "cuda"
@@ -224,7 +225,8 @@ def analyze_clip(
     emit = progress or (lambda f, m: None)
     config.ensure_home()
 
-    work_dir = config.jobs_dir() / campaign_id / "clip_analysis"
+    campaign_dir = store.get_campaign_dir(campaign_id)
+    work_dir = config.jobs_dir() / campaign_dir / "clip_analysis"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # Determine settings

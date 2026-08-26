@@ -34,7 +34,7 @@ class DiarizeStage(Stage):
 
         ctx.emit(-1, "Loading speaker model…")
         ckpt = registry.ensure(specs.CAMPPLUS, lambda f, m: ctx.emit(f * 0.2, m))
-        device = torch.device("cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = campplus.load_model(str(ckpt), device)
 
         import librosa
@@ -64,6 +64,12 @@ class DiarizeStage(Stage):
                 progress=lambda f: ctx.emit(0.25 + f * 0.55, "Embedding speech…"),
             )
             np.save(cache_path, embeddings)
+
+        del model
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         ctx.emit(0.85, "Clustering speakers…")
         labels = cluster.cluster_windows(embeddings)

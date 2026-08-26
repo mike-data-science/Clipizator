@@ -192,7 +192,9 @@ def clip_thumb(job_id: str, clip_index: int, clip_path: str | None = None) -> st
     """The clip's local thumbnail — its hook frame (~1 s in; the hook IS the
     opening seconds). Extracted lazily once per clip, cached in the job dir,
     so every clip has a thumbnail from birth, published or not."""
-    clips_dir = config.jobs_dir() / job_id / "clips"
+    from ..jobs import queue
+    job = queue.get_job(job_id)
+    clips_dir = job.dir / "clips" if job else config.jobs_dir() / job_id / "clips"
     dest = clips_dir / f"clip_{clip_index:02d}_thumb.jpg"
     if dest.exists():
         return str(dest)

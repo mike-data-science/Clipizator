@@ -240,28 +240,31 @@ def check_ollama():
 
 @app.get("/api/jobs")
 def list_jobs():
-    jobs_dir = _home() / "jobs"
     out = []
-    if jobs_dir.exists():
-        for entry in jobs_dir.iterdir():
-            if not entry.is_dir():
-                continue
-            job_id = entry.name
-            has_render = (entry / "render.json").exists()
-            has_ingest = (entry / "ingest.json").exists()
-            title = None
-            if has_ingest:
-                try:
-                    d = json.loads((entry / "ingest.json").read_text(errors="replace"))
-                    title = d.get("data", {}).get("title")
-                except Exception:
-                    pass
-            out.append({
-                "id": job_id,
-                "title": title,
-                "ingested": has_ingest,
-                "rendered": has_render,
-            })
+    with queue._connect() as conn:
+        rows = conn.execute("SELECT id FROM jobs").fetchall()
+    
+    for row in rows:
+        job = queue.get_job(row["id"])
+        if not job or not job.dir.exists():
+            continue
+        entry = job.dir
+        job_id = job.id
+        has_render = (entry / "render.json").exists()
+        has_ingest = (entry / "ingest.json").exists()
+        title = None
+        if has_ingest:
+            try:
+                d = json.loads((entry / "ingest.json").read_text(errors="replace"))
+                title = d.get("data", {}).get("title")
+            except Exception:
+                pass
+        out.append({
+            "id": job_id,
+            "title": title,
+            "ingested": has_ingest,
+            "rendered": has_render,
+        })
     out.sort(key=lambda x: x["id"], reverse=True)
     return out
 
@@ -269,17 +272,18 @@ def list_jobs():
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: str):
     import shutil
-    job_dir = _home() / "jobs" / job_id
-    if job_dir.exists():
-        shutil.rmtree(job_dir, ignore_errors=True)
+    job = queue.get_job(job_id)
+    if job and job.dir.exists():
+        shutil.rmtree(job.dir, ignore_errors=True)
     return {"status": "ok"}
 
 
 @app.get("/api/jobs/{job_id}/results")
 def job_results(job_id: str):
-    job_dir = _home() / "jobs" / job_id
-    if not job_dir.exists():
+    job = queue.get_job(job_id)
+    if not job or not job.dir.exists():
         raise HTTPException(404, f"no job dir for {job_id}")
+    job_dir = job.dir
     return {
         "job_id": job_id,
         "dir": str(job_dir),
@@ -392,7 +396,8 @@ def get_queue_pending_download():
             # Check if job exists and has ingest
             has_ingest = False
             if cv.get("job_id"):
-                job_dir = _home() / "jobs" / cv["job_id"]
+                job = queue.get_job(cv["job_id"])
+                job_dir = job.dir if job else None
                 if job_dir.exists() and (job_dir / "ingest.json").exists():
                     has_ingest = True
             
@@ -417,7 +422,8 @@ def get_queue_pending_transcribe():
             has_ingest = False
             has_asr = False
             if cv.get("job_id"):
-                job_dir = _home() / "jobs" / cv["job_id"]
+                job = queue.get_job(cv["job_id"])
+                job_dir = job.dir if job else None
                 if job_dir.exists():
                     if (job_dir / "ingest.json").exists():
                         has_ingest = True
@@ -444,6 +450,10 @@ def _get_or_create_job_for_queue(body: dict):
         
     settings = config.Settings()
     
+    campaign_dir = None
+    if campaign_id:
+        campaign_dir = store.get_campaign_dir(campaign_id)
+
     # Do we have an existing job for this video?
     job_id = None
     if campaign_id:
@@ -455,10 +465,9 @@ def _get_or_create_job_for_queue(body: dict):
                 
     if job_id:
         job = queue.get_job(job_id)
-        if not job:
-            job = queue.create_job("url", video_url, json.dumps(settings.to_json()))
-    else:
-        job = queue.create_job("url", video_url, json.dumps(settings.to_json()))
+        
+    if not job_id or not job:
+        job = queue.create_job("url", video_url, json.dumps(settings.to_json()), campaign_dir=campaign_dir)
         if campaign_id:
             # Update the video record with the new job_id
             with store._connect() as conn:
@@ -471,7 +480,7 @@ def _get_or_create_job_for_queue(body: dict):
 @app.post("/api/queue/run_download")
 async def run_queue_download(body: dict):
     job = _get_or_create_job_for_queue(body)
-    queue_stages = [s for s in _stages() if s.name == "ingest"]
+    queue_stages = [s for s in _stages() if s.name in ("ingest", "asr")]
     
     def _run_download():
         _run_pipeline_thread(job, queue_stages, source="queue")
@@ -535,7 +544,14 @@ async def upload_and_run(
     if asr_model:
         settings.asr_model = asr_model
 
-    job = queue.create_job("file", str(dest), json.dumps(settings.to_json()))
+    from publikclip_pipeline.campaigns import store
+    campaign_dir = "standalone"
+    with store._connect() as conn:
+        c = conn.execute("SELECT id FROM campaigns LIMIT 1").fetchone()
+        if c:
+            campaign_dir = store.get_campaign_dir(c["id"])
+
+    job = queue.create_job("file", str(dest), json.dumps(settings.to_json()), campaign_dir=campaign_dir)
     threading.Thread(target=_run_pipeline_thread, args=(job,), daemon=True).start()
     return {"ok": True, "job_id": job.id}
 
@@ -645,14 +661,12 @@ async def render_clip(job_id: str, clip_index: int):
             _broadcast_sync({"event": "result", "ok": False, "error": str(err)})
 
     threading.Thread(target=do_render, daemon=True).start()
-    return {"ok": True}
-
-
 @app.put("/api/jobs/{job_id}/edits")
 async def save_clip_edits(job_id: str, body: dict):
-    job_dir = _home() / "jobs" / job_id
-    if not job_dir.exists():
-        raise HTTPException(404, f"no job {job_id}")
+    job = queue.get_job(job_id)
+    if not job or not job.dir.exists():
+        raise HTTPException(404, "Job not found")
+    job_dir = job.dir
     path = job_dir / "clip_edits.json"
     current = {}
     if path.exists():
@@ -671,8 +685,10 @@ async def save_clip_edits(job_id: str, body: dict):
 @app.get("/api/jobs/{job_id}/clips/{clip_index}/download")
 async def download_clip(job_id: str, clip_index: int, title: str | None = None):
     """Serve a rendered clip file for browser download."""
-    job_dir = _home() / "jobs" / job_id
-    render_data = _read_stage(job_dir, "render")
+    job = queue.get_job(job_id)
+    if not job or not job.dir.exists():
+        raise HTTPException(404, "Job not found")
+    render_data = _read_stage(job.dir, "render")
     if not render_data:
         raise HTTPException(404, "no render data")
     outputs = render_data.get("outputs", [])
@@ -792,8 +808,9 @@ def get_campaign(campaign_id: str):
         has_ingest = False
         has_asr = False
         if job_id:
-            job_dir = _home() / "jobs" / job_id
-            if job_dir.exists():
+            job = queue.get_job(job_id)
+            if job and job.dir.exists():
+                job_dir = job.dir
                 if (job_dir / "ingest.json").exists():
                     has_ingest = True
                 if (job_dir / "asr.json").exists():
@@ -1069,7 +1086,8 @@ async def analyze_campaign(campaign_id: str, request: Request):
             # Auto-run the LLM scoring step without requiring manual MCP intervention
             from publikclip_pipeline import config
             import json
-            pending_file = config.jobs_dir() / campaign_id / "pending_scoring.json"
+            campaign_dir = store.get_campaign_dir(campaign_id)
+            pending_file = config.jobs_dir() / campaign_dir / "pending_scoring.json"
             
             if pending_file.exists():
                 from publikclip_pipeline.scoring import llm as llm_mod, rubric
@@ -1421,6 +1439,16 @@ async def serve_media(path: str):
     """Serve files from PUBLIKCLIP_HOME. The frontend requests paths relative
     to the home dir (e.g. /media/jobs/<id>/render_0.mp4)."""
     full = _home() / path
+    if path.startswith("jobs/") and not full.exists():
+        parts = path.split("/")
+        if len(parts) >= 3:
+            job_id = parts[1]
+            job = queue.get_job(job_id)
+            if job and job.dir:
+                virtual_full = job.dir.joinpath(*parts[2:])
+                if virtual_full.exists():
+                    full = virtual_full
+
     if not full.exists():
         raise HTTPException(404, "file not found")
     # Determine content type from extension
@@ -1482,7 +1510,8 @@ async def worker_upload(
     meta_content = await metadata.read()
     meta_json = json.loads(meta_content.decode("utf-8"))
     
-    work_dir = config.jobs_dir() / campaign_id / "clip_analysis"
+    campaign_dir = store.get_campaign_dir(campaign_id)
+    work_dir = config.jobs_dir() / campaign_dir / "clip_analysis"
     work_dir.mkdir(parents=True, exist_ok=True)
     
     video_path = work_dir / f"clip_{meta_json.get('id', clip_id)}.mp4"

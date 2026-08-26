@@ -129,6 +129,17 @@ export function Queue(_props: { onSendToStudio: (url: string) => void }) {
     }
   }
 
+  async function handleDeleteJob(jobId: string) {
+    if (!confirm('Are you sure you want to reset this job? This will delete the downloaded files and you will have to download them again.')) return
+    try {
+      await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' })
+      loadQueue()
+    } catch (err) {
+      console.error('Failed to delete job:', err)
+      alert('Failed to reset job')
+    }
+  }
+
   return (
     <div className="analytics" style={{ flex: 1, padding: '40px', overflowY: 'auto' }}>
       <header style={{ marginBottom: '40px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
@@ -200,6 +211,14 @@ export function Queue(_props: { onSendToStudio: (url: string) => void }) {
                       <div style={{ height: '100%', background: isCompleted ? '#4caf50' : isFailed ? '#f44336' : 'var(--primary)', width: isCompleted || isFailed ? '100%' : `${isRunning ? Math.max(0, stage?.fraction || 0) * 100 : 0}%`, transition: 'width 0.3s' }} />
                     </div>
                   </div>
+                  {item.job_id && (isFailed || isCompleted) && (
+                    <button 
+                      onClick={() => handleDeleteJob(item.job_id!)}
+                      style={{ marginTop: '8px', padding: '4px 12px', fontSize: '11px', background: 'rgba(244, 67, 54, 0.1)', color: '#f44336', border: '1px solid rgba(244, 67, 54, 0.3)', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      Delete & Retry
+                    </button>
+                  )}
                 </div>
               </div>
             )

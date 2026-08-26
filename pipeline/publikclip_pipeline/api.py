@@ -252,17 +252,22 @@ async def job_results(job_id: str):
 @app.get("/api/jobs")
 async def list_jobs():
     out = []
-    jobs_dir = config.jobs_dir()
-    if jobs_dir.exists():
-        for d in jobs_dir.iterdir():
-            if d.is_dir():
-                id = d.name
-                has_render = (d / "render.json").exists()
-                has_ingest = (d / "ingest.json").exists()
-                title = None
-                if has_ingest:
-                    try:
-                        title = json.loads((d / "ingest.json").read_text())["data"]["title"]
+    with job_queue._connect() as conn:
+        rows = conn.execute("SELECT id FROM jobs").fetchall()
+        
+    for row in rows:
+        job = job_queue.get_job(row["id"])
+        if not job or not job.dir.exists():
+            continue
+            
+        d = job.dir
+        id = job.id
+        has_render = (d / "render.json").exists()
+        has_ingest = (d / "ingest.json").exists()
+        title = None
+        if has_ingest:
+            try:
+                title = json.loads((d / "ingest.json").read_text())["data"]["title"]
                     except Exception:
                         pass
                 out.append({
