@@ -52,8 +52,14 @@ class CandidatesStage(Stage):
         curves = json.loads(curves_path.read_text())
 
         ctx.emit(-1, "Detecting scene changes…")
+        
+        media_str = ingest.get("media_path", "").replace("\\", "/")
+        media = Path(media_str)
+        if not media.exists():
+            media = ctx.job_dir / Path(media_str).name
+            
         try:
-            scene_times = detect_scenes(ingest["media_path"])
+            scene_times = detect_scenes(str(media))
         except Exception:  # noqa: BLE001 — scenes are a minor channel; degrade
             scene_times = []
         (ctx.job_dir / "scenes.json").write_text(json.dumps(scene_times))

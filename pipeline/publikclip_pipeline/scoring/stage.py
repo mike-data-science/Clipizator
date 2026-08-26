@@ -214,8 +214,13 @@ class ScoreStage(Stage):
             visual = None
             if supports_vision:
                 times = frames_mod.sample_times(entry["start"], entry["end"], scene_times)
+                media_str = ingest.get("media_path", "").replace("\\", "/")
+                media_path = Path(media_str)
+                if not media_path.exists():
+                    media_path = ctx.job_dir / Path(media_str).name
+                    
                 imgs = frames_mod.extract_frames(
-                    ingest["media_path"], times, ctx.job_dir / "t2frames"
+                    str(media_path), times, ctx.job_dir / "t2frames"
                 )
                 if imgs:
                     try:

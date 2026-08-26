@@ -20,7 +20,11 @@ class DiarizeStage(Stage):
         ingest, asr = prior.get("ingest"), prior.get("asr")
         if not ingest or not asr:
             raise StageError("Diarization needs ingest + asr outputs.")
-        audio_path = Path(ingest["audio_path"])
+        audio_str = ingest.get("audio_path", "").replace("\\", "/")
+        audio_path = Path(audio_str)
+        if not audio_path.exists():
+            audio_path = ctx.job_dir / Path(audio_str).name
+            
         if not audio_path.exists():
             raise StageError("Analysis audio missing — re-run ingest.")
 

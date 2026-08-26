@@ -52,8 +52,15 @@ class EventsStage(Stage):
         ingest, asr = prior.get("ingest"), prior.get("asr")
         if not ingest or not asr:
             raise StageError("Events need ingest + asr outputs.")
-        media = Path(ingest["media_path"])
-        audio16 = Path(ingest["audio_path"])
+        media_str = ingest.get("media_path", "").replace("\\", "/")
+        media = Path(media_str)
+        if not media.exists():
+            media = ctx.job_dir / Path(media_str).name
+            
+        audio_str = ingest.get("audio_path", "").replace("\\", "/")
+        audio16 = Path(audio_str)
+        if not audio16.exists():
+            audio16 = ctx.job_dir / Path(audio_str).name
 
         import json
 

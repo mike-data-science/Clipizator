@@ -69,7 +69,10 @@ export default function App() {
         setActiveJob(payload.job_id)
         setResults(null)
       } else if (payload.event === 'progress' && payload.stage) {
-        if (!payload.job_id || payload.job_id === activeJobRef.current) {
+        if (!payload.job_id || !activeJobRef.current || payload.job_id === activeJobRef.current) {
+          if (payload.job_id && !activeJobRef.current) {
+            setActiveJob(payload.job_id)
+          }
           setStages((prev) => ({
             ...prev,
             [payload.stage!]: {
@@ -81,8 +84,9 @@ export default function App() {
       } else if (payload.event === 'result') {
         setRunning(false)
         refreshJobs()
-        if (payload.ok && activeJobRef.current) {
-          api.jobResults(activeJobRef.current).then((r) => {
+        const targetJobId = payload.job_id || activeJobRef.current
+        if (payload.ok && targetJobId) {
+          api.jobResults(targetJobId).then((r) => {
             setResults(r)
             setView('review')
           })
@@ -110,7 +114,15 @@ export default function App() {
       setStages({})
       setResults(null)
       setActiveJob(null)
-      await api.runJob(source, llm, geminiModel, captions, asrModel)
+      try {
+        const res = await api.runJob(source, llm, geminiModel, captions, asrModel)
+        if (res && (res as any).job_id) {
+          setActiveJob((res as any).job_id)
+        }
+      } catch (err: any) {
+        setRunning(false)
+        setRunError(err.message || 'Failed to start job')
+      }
     },
     []
   )

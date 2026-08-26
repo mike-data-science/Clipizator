@@ -206,7 +206,8 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
         args = [
             "-J", 
             "--no-playlist", 
-            "--no-warnings"
+            "--no-warnings",
+            "--proxy", "socks5://127.0.0.1:1080"
         ]
         repo_root = Path(__file__).resolve().parent.parent.parent.parent
         cookies_path = repo_root / "cookies.txt"
@@ -273,6 +274,7 @@ def download(url: str, out_path: Path, progress: ProgressFn) -> None:
         "--no-playlist",
         "--no-warnings",
         "--newline",
+        "--proxy", "socks5://127.0.0.1:1080"
     ]
     if ffmpeg:
         args.extend(["--ffmpeg-location", ffmpeg])

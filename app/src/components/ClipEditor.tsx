@@ -36,7 +36,88 @@ interface EditContext {
   run_caption_preset: string
 }
 
-const PRESETS = ['classic', 'beast', 'hormozi', 'minimal', 'karaoke-pop']
+const CAPTION_PRESET_DEFS: Record<string, {
+  label: string
+  fontFamily: string
+  primaryColor: string
+  activeColor: string
+  emphasisColor: string
+  shadow: string
+  stroke: string
+  uppercase: boolean
+}> = {  beast: {
+    label: 'Viral Yellow',
+    fontFamily: "'Anton', 'Impact', sans-serif",
+    primaryColor: '#FFFFFF',
+    activeColor: '#FAFF00',
+    emphasisColor: '#FF2D55',
+    stroke: '2px #000',
+    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000',
+    uppercase: true,
+  },
+  hormozi: {
+    label: 'Neon Lime',
+    fontFamily: "'Archivo Black', sans-serif",
+    primaryColor: '#FFFFFF',
+    activeColor: '#00FF66',
+    emphasisColor: '#FAFF00',
+    stroke: '2px #000',
+    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000',
+    uppercase: true,
+  },
+  'karaoke-pop': {
+    label: 'Cyan Glow',
+    fontFamily: "'Archivo Black', sans-serif",
+    primaryColor: '#FFFFFF',
+    activeColor: '#00E5FF',
+    emphasisColor: '#FF2DF1',
+    stroke: '2px #000',
+    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000, 0 0 10px rgba(0,229,255,0.6)',
+    uppercase: true,
+  },
+  'neon-glow': {
+    label: 'Cyber Pink',
+    fontFamily: "'Archivo Black', sans-serif",
+    primaryColor: '#FFFFFF',
+    activeColor: '#FF2DF1',
+    emphasisColor: '#00E5FF',
+    stroke: '2px #1A001A',
+    shadow: '2px 2px 0px #1a001a, -2px -2px 0px #1a001a, 2px -2px 0px #1a001a, -2px 2px 0px #1a001a, 0 0 12px rgba(255,45,241,0.7)',
+    uppercase: true,
+  },
+  redbull: {
+    label: 'Flame Orange',
+    fontFamily: "'Anton', 'Impact', sans-serif",
+    primaryColor: '#FFFFFF',
+    activeColor: '#FF5500',
+    emphasisColor: '#FAFF00',
+    stroke: '2px #000',
+    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000',
+    uppercase: true,
+  },
+  classic: {
+    label: 'Clean White',
+    fontFamily: "'Inter', sans-serif",
+    primaryColor: '#FFFFFF',
+    activeColor: '#FAFF00',
+    emphasisColor: '#FAFF00',
+    stroke: '1.5px #000',
+    shadow: '1.5px 1.5px 0px #000, -1.5px -1.5px 0px #000, 1.5px -1.5px 0px #000, -1.5px 1.5px 0px #000',
+    uppercase: false,
+  },
+  minimal: {
+    label: 'Minimal Sky',
+    fontFamily: "'Inter', sans-serif",
+    primaryColor: '#FFFFFF',
+    activeColor: '#38BDF8',
+    emphasisColor: '#FAFF00',
+    stroke: '1px #000',
+    shadow: '1px 1px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000',
+    uppercase: false,
+  },
+}
+
+const PRESETS = ['beast', 'hormozi', 'karaoke-pop', 'neon-glow', 'redbull', 'classic', 'minimal']
 const CAMERAS = ['cut', 'pan', 'locked']
 const ANIMS = ['none', 'pop', 'ping']
 
@@ -421,6 +502,62 @@ export default function ClipEditor({ jobId, clipIndex, onClose, onRendered }: Pr
               />
             )
           })}
+          {/* Synchronized live caption overlay */}
+          {(() => {
+            if (!ctx?.words?.length) return null
+            const v = videoRef.current
+            const t = v ? v.currentTime : -1
+            const presetKey = edit.caption_preset ?? ctx.run_caption_preset ?? 'beast'
+            const style = CAPTION_PRESET_DEFS[presetKey] || CAPTION_PRESET_DEFS.beast
+
+            const wordIdx = ctx.words.findIndex((w) => t >= w.start && t < w.end)
+            if (wordIdx === -1) return null
+
+            const chunkStartIdx = Math.max(0, Math.floor(wordIdx / 4) * 4)
+            const chunkWords = ctx.words.slice(chunkStartIdx, chunkStartIdx + 4)
+
+            return (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '20%',
+                  left: '6%',
+                  right: '6%',
+                  zIndex: 4,
+                  textAlign: 'center',
+                  pointerEvents: 'none',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'center',
+                  gap: '6px 8px',
+                  fontFamily: style.fontFamily,
+                  fontSize: '18px',
+                  fontWeight: 900,
+                  textTransform: style.uppercase ? 'uppercase' : 'none'
+                }}
+              >
+                {chunkWords.map((w, idx) => {
+                  const isActive = chunkStartIdx + idx === wordIdx
+                  const color = isActive ? style.activeColor : style.primaryColor
+                  return (
+                    <span
+                      key={idx}
+                      style={{
+                        color,
+                        WebkitTextStroke: style.stroke,
+                        textShadow: style.shadow,
+                        transform: isActive ? 'scale(1.12)' : 'scale(1)',
+                        display: 'inline-block',
+                        transition: 'transform 0.08s ease'
+                      }}
+                    >
+                      {w.word}
+                    </span>
+                  )
+                })}
+              </div>
+            )
+          })()}
         </div>
         <div className="monitor-src-bar">
           <button className="play-btn" onClick={togglePlay}>
