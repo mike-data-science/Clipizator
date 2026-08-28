@@ -480,13 +480,22 @@ def _get_or_create_job_for_queue(body: dict):
 @app.post("/api/queue/run_download")
 async def run_queue_download(body: dict):
     job = _get_or_create_job_for_queue(body)
-    queue_stages = [s for s in _stages() if s.name in ("ingest", "asr")]
-    
-    def _run_download():
-        _run_pipeline_thread(job, queue_stages, source="queue")
-        
-    threading.Thread(target=_run_download, daemon=True).start()
-    return {"ok": True, "job_id": job.id}
+    WORKER_QUEUE.append({
+        "type": "source",
+        "job_id": job.id,
+        "campaign_id": body.get("campaign_id"),
+        "url": job.source,
+        "role": "source",
+    })
+    _broadcast_sync({
+        "event": "result",
+        "ok": True,
+        "stage": "worker_queued",
+        "campaign_id": body.get("campaign_id"),
+        "url": job.source,
+        "message": "Source download sent to laptop worker queue",
+    })
+    return {"ok": True, "job_id": job.id, "message": "Queued for laptop worker"}
 
 @app.post("/api/queue/run_transcribe")
 async def run_queue_transcribe(body: dict):
@@ -875,9 +884,20 @@ async def refresh_campaign_video(campaign_id: str, video_id: int):
     if not job:
         raise HTTPException(404, "pipeline job not found")
     queue.invalidate_checkpoints(job)
+    with queue._connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET source_type = 'url', source = ? WHERE id = ?",
+            (video["video_url"], job.id),
+        )
     queue.set_job_status(job.id, "pending")
-    threading.Thread(target=_run_pipeline_thread, args=(job,), daemon=True).start()
-    return {"ok": True, "job_id": job.id, "message": "source refresh and re-render started"}
+    WORKER_QUEUE.append({
+        "type": "source",
+        "job_id": job.id,
+        "campaign_id": campaign_id,
+        "url": video["video_url"],
+        "role": "source",
+    })
+    return {"ok": True, "job_id": job.id, "message": "source refresh queued for laptop worker"}
 
 @app.put("/api/campaigns/{campaign_id}")
 def update_campaign(campaign_id: str, body: dict):
@@ -1633,3 +1653,33 @@ async def worker_upload(
             
     threading.Thread(target=_resume_analyze, daemon=True).start()
     return {"ok": True}
+
+
+@app.post("/api/worker/upload-source/{job_id}")
+async def worker_upload_source(
+    job_id: str,
+    video: UploadFile = File(...),
+    metadata: UploadFile | None = File(None),
+):
+    """Store a laptop-downloaded campaign source in its normal job folder."""
+    job = queue.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "pipeline job not found")
+    job.dir.mkdir(parents=True, exist_ok=True)
+    video_path = job.dir / "media.mkv"
+    with video_path.open("wb") as output:
+        while chunk := await video.read(1024 * 1024):
+            output.write(chunk)
+    with queue._connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET source_type = 'file', source = ? WHERE id = ?",
+            (str(video_path), job_id),
+        )
+    job = queue.get_job(job_id)
+    threading.Thread(
+        target=_run_pipeline_thread,
+        args=(job, [s for s in _stages() if s.name in ("ingest", "asr")]),
+        kwargs={"source": "worker"},
+        daemon=True,
+    ).start()
+    return {"ok": True, "job_id": job_id, "message": "source uploaded; ingest and transcription started"}

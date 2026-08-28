@@ -27,8 +27,10 @@ def get_jobs(server_url):
     return []
 
 def download_and_upload(job, server_url):
-    campaign_id = job["campaign_id"]
-    clip_id = job["clip_id"]
+    job_type = job.get("type", "clip")
+    campaign_id = job.get("campaign_id")
+    clip_id = job.get("clip_id")
+    job_id = job.get("job_id")
     url = job["url"]
     role = job.get("role", "competitor")
     
@@ -61,7 +63,12 @@ def download_and_upload(job, server_url):
             }
             data = {"role": role}
             
-            resp = requests.post(f"{server_url}/api/worker/upload/{campaign_id}/{clip_id}", files=files, data=data)
+            upload_url = (
+                f"{server_url}/api/worker/upload-source/{job_id}"
+                if job_type == "source"
+                else f"{server_url}/api/worker/upload/{campaign_id}/{clip_id}"
+            )
+            resp = requests.post(upload_url, files=files, data=data)
             
             if resp.status_code == 200:
                 print("Successfully uploaded to VM! VM has resumed analysis.")
