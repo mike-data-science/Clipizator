@@ -109,6 +109,14 @@ def test_corrupt_checkpoint_reruns():
     assert stage.runs == 2
 
 
+def test_legacy_cp1252_checkpoint_is_readable():
+    job = queue.create_job("file", "/tmp/x.mp4", _settings_json())
+    path = queue.checkpoint_path(job, "legacy")
+    path.write_bytes(b'{"stage":"legacy","schema_version":1,"data":{"text":"caf\x96"}}')
+
+    assert queue.read_checkpoint(job, "legacy", 1) == {"text": "caf\u2013"}
+
+
 def test_stage_error_marks_job_failed():
     job = queue.create_job("file", "/tmp/x.mp4", _settings_json())
     with pytest.raises(queue.StageError):

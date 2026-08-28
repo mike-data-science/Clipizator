@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import json
+import argparse
 import requests
 from pathlib import Path
 
@@ -10,18 +11,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "pipeline"))
 
 from publikclip_pipeline.ingest import ytdlp
 
-VM_URL = "http://4.231.114.220:8000"
+DEFAULT_VM_URL = os.environ.get("PUBLIKCLIP_SERVER_URL", "http://4.231.114.220:8000").rstrip("/")
 
-def get_jobs():
+def get_jobs(server_url):
     try:
-        resp = requests.get(f"{VM_URL}/api/worker/jobs", timeout=5)
+        resp = requests.get(f"{server_url}/api/worker/jobs", timeout=5)
         if resp.status_code == 200:
             return resp.json().get("jobs", [])
+        print(f"Worker queue returned HTTP {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
-        pass
+        print(f"Worker cannot reach {server_url}: {e}")
     return []
 
-def download_and_upload(job):
+def download_and_upload(job, server_url):
     campaign_id = job["campaign_id"]
     clip_id = job["clip_id"]
     url = job["url"]
@@ -56,7 +58,7 @@ def download_and_upload(job):
             }
             data = {"role": role}
             
-            resp = requests.post(f"{VM_URL}/api/worker/upload/{campaign_id}/{clip_id}", files=files, data=data)
+            resp = requests.post(f"{server_url}/api/worker/upload/{campaign_id}/{clip_id}", files=files, data=data)
             
             if resp.status_code == 200:
                 print("Successfully uploaded to VM! VM has resumed analysis.")
@@ -75,12 +77,21 @@ def download_and_upload(job):
         print("Cleaned up local files.")
 
 def main():
-    print(f"Starting Laptop Worker. Polling {VM_URL} for new downloads...")
+    parser = argparse.ArgumentParser(description="Download queued campaign clips on this laptop.")
+    parser.add_argument("--server-url", default=DEFAULT_VM_URL, help="Backend URL, e.g. http://127.0.0.1:8001")
+    parser.add_argument("--once", action="store_true", help="Poll once and exit")
+    args = parser.parse_args()
+    print(f"Starting Laptop Worker. Polling {args.server_url} for new downloads...")
     while True:
-        jobs = get_jobs()
+        jobs = get_jobs(args.server_url)
         if jobs:
             for job in jobs:
-                download_and_upload(job)
+                download_and_upload(job, args.server_url)
+        elif args.once:
+            print("No queued worker jobs.")
+            return
+        if args.once:
+            return
         time.sleep(5)
 
 if __name__ == "__main__":

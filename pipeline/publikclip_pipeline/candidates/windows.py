@@ -21,6 +21,38 @@ DEDUPE_IOU = 0.55
 MAX_CANDIDATES = 35
 
 
+def detect_candidate_types(text: str) -> list[str]:
+    """Cheap semantic type detection that survives before Qwen deep scoring.
+    This is intentionally lightweight and must stay explainable."""
+    t = text.lower()
+    types: list[str] = []
+    if "?" in t or "why" in t or "how" in t or "what" in t:
+        types.append("question")
+    if any(k in t for k in ("i learned", "i realized", "i noticed", "i figured out", "i was wrong", "mistake")):
+        types.extend(["story", "lesson"]) 
+    if any(k in t for k in ("you don't need", "most people", "stop", "never", "instead of", "not just")):
+        types.append("contrarian")
+    if any(k in t for k in ("shocking", "crazy", "surprising", "unexpected", "nobody tells you", "no one tells you")):
+        types.append("shocking")
+    if any(k in t for k in ("i failed", "i messed up", "biggest mistake", "worst", "didn't work")):
+        types.append("failure")
+    if any(k in t for k in ("i spent", "i built", "i started", "i tried", "years")):
+        types.append("personal_story")
+    if any(k in t for k in ("because", "the reason", "here's why", "this is why", "the real problem")):
+        types.append("educational")
+    if any(k in t for k in ("angry", "frustrated", "upset", "sad", "hurt", "cry", "terrified")):
+        types.append("emotional")
+    if any(k in t for k in ("1", "2", "3", "4", "5", "10", "20", "50", "100", "percent", "%")):
+        types.append("statistics")
+    if not types:
+        types = ["story"]
+    deduped: list[str] = []
+    for name in types:
+        if name not in deduped:
+            deduped.append(name)
+    return deduped
+
+
 @dataclass
 class Candidate:
     start: float
@@ -28,6 +60,7 @@ class Candidate:
     peak_time: float
     curve_score: float
     channel_scores: dict[str, float] = field(default_factory=dict)
+    candidate_types: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict:
         return {
@@ -36,6 +69,7 @@ class Candidate:
             "peak_time": round(self.peak_time, 3),
             "curve_score": round(self.curve_score, 4),
             "channel_scores": self.channel_scores,
+            "candidate_types": self.candidate_types,
         }
 
 
@@ -147,6 +181,14 @@ def extract(
             for name, ch in channels.items()
             if len(ch) > a
         }
+        window_segments = [
+            seg for seg in segments
+            if seg.get("end", 0.0) >= start and seg.get("start", 0.0) <= end
+        ]
+        window_text = " ".join(
+            seg.get("text") or " ".join(w.get("word", "") for w in seg.get("words", []))
+            for seg in window_segments
+        )
         out.append(
             Candidate(
                 start=start,
@@ -154,6 +196,7 @@ def extract(
                 peak_time=float(peak),
                 curve_score=float(np.mean(curve[a : min(b, len(curve))])),
                 channel_scores=per_channel,
+                candidate_types=detect_candidate_types(window_text),
             )
         )
     return dedupe(out)

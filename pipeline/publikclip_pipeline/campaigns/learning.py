@@ -9,6 +9,18 @@ from __future__ import annotations
 import json
 from . import store
 
+FEEDBACK_FEATURES = {
+    "hook_density_score": 0.18,
+    "payoff_density": 0.18,
+    "question_density": 0.10,
+    "first_person_ratio": 0.08,
+    "llm_hook_score": 0.12,
+    "llm_funniness": 0.12,
+    "llm_shock": 0.08,
+    "llm_curiosity_gap": 0.08,
+    "llm_value_score": 0.06,
+}
+
 # Global default weights (fallback before campaign has enough data)
 DEFAULT_WEIGHTS = {
     # Text features (instant)
@@ -69,6 +81,77 @@ def _normalize_views(clips: list[dict]) -> dict[int, float]:
     return result
 
 
+def _feedback_bias(campaign_id: str) -> dict[str, float]:
+    """A light human-feedback prior: approvals boost the features that already
+    looked promising, rejections shrink them. This is intentionally small and
+    never requires Gemini or external APIs."""
+    rows = _latest_feedback(store.campaign_feedback(campaign_id))
+    if not rows:
+        return {k: 0.0 for k in DEFAULT_WEIGHTS}
+    bias = {k: 0.0 for k in DEFAULT_WEIGHTS}
+    for row in rows:
+        label = (row.get("label") or "").lower()
+        if label not in {"approved", "rejected"}:
+            continue
+        weight = 1.0 if label == "approved" else -1.0
+        for feature, delta in FEEDBACK_FEATURES.items():
+            bias[feature] += weight * delta
+    return bias
+
+
+def _latest_feedback(rows: list[dict]) -> list[dict]:
+    """Collapse repeated decisions to the newest decision per reviewed item."""
+    latest: dict[tuple, dict] = {}
+    for row in rows:
+        key = (
+            row.get("job_id"), row.get("clip_index"), row.get("video_url"),
+            row.get("start_sec"), row.get("end_sec"),
+        )
+        if key not in latest or row.get("created_at", 0) > latest[key].get("created_at", 0):
+            latest[key] = row
+    return list(latest.values())
+
+
+def feedback_summary(campaign_id: str) -> dict[str, int]:
+    """Summarize the latest decision for each reviewed clip or moment."""
+    rows = _latest_feedback(store.campaign_feedback(campaign_id))
+    approvals = sum(1 for row in rows if row.get("label") == "approved")
+    rejections = sum(1 for row in rows if row.get("label") == "rejected")
+    return {
+        "total": len(rows),
+        "approvals": approvals,
+        "rejections": rejections,
+        "net": approvals - rejections,
+    }
+
+
+def feedback_adjustment(campaign_id: str, candidate: dict) -> float:
+    """Return a bounded score adjustment for feedback on this exact moment."""
+    start = candidate.get("start_sec")
+    end = candidate.get("end_sec")
+    video_url = candidate.get("video_url")
+    if start is None or end is None or not video_url:
+        return 0.0
+
+    adjustment = 0.0
+    for row in _latest_feedback(store.campaign_feedback(campaign_id)):
+        if row.get("video_url") != video_url:
+            continue
+        feedback_start = row.get("start_sec")
+        feedback_end = row.get("end_sec")
+        if feedback_start is None or feedback_end is None:
+            continue
+        overlap = min(float(end), float(feedback_end)) - max(float(start), float(feedback_start))
+        if overlap <= 0:
+            continue
+        label = (row.get("label") or "").lower()
+        if label == "approved":
+            adjustment += 1.0
+        elif label == "rejected":
+            adjustment -= 1.0
+    return max(-2.0, min(2.0, adjustment))
+
+
 def compute_feature_weights(campaign_id: str) -> dict[str, float]:
     """Compute correlation between features and actual views in this campaign.
     
@@ -78,9 +161,13 @@ def compute_feature_weights(campaign_id: str) -> dict[str, float]:
     # 1. Get clips with analytics
     clips = store.campaign_clips(campaign_id)
     clips_with_views = [c for c in clips if c.get("views") is not None and c.get("start_sec") is not None]
-    
+
     if len(clips_with_views) < 10:
-        return DEFAULT_WEIGHTS
+        weights = DEFAULT_WEIGHTS.copy()
+        bias = _feedback_bias(campaign_id)
+        for key in weights:
+            weights[key] += bias.get(key, 0.0)
+        return weights
         
     # 2. Get moments for these clips
     moments = store.campaign_moments(campaign_id, limit=1000)
@@ -144,8 +231,14 @@ def compute_feature_weights(campaign_id: str) -> dict[str, float]:
     if abs_sum > 0:
         weights = {k: v / abs_sum for k, v in weights.items()}
     else:
-        weights = DEFAULT_WEIGHTS
-        
+        weights = DEFAULT_WEIGHTS.copy()
+
+    bias = _feedback_bias(campaign_id)
+    for key in weights:
+        weights[key] += bias.get(key, 0.0)
+    abs_sum = sum(abs(w) for w in weights.values())
+    if abs_sum > 0:
+        weights = {k: v / abs_sum for k, v in weights.items()}
     return weights
 
 

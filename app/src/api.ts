@@ -137,6 +137,8 @@ export const api = {
     post(`/jobs/${jobId}/edit/${editCmd}`, body),
   runEditRender: (jobId: string, clipIndex: number) =>
     post(`/jobs/${jobId}/clips/${clipIndex}/render`),
+  submitClipFeedback: (jobId: string, clipIndex: number, label: 'approved' | 'rejected' | 'neutral', reason?: string) =>
+    post<{ ok: boolean; feedback: Record<string, unknown> }>(`/jobs/${jobId}/clips/${clipIndex}/feedback`, { label, reason }),
   saveClipEdits: (jobId: string, edits: Record<string, unknown>) =>
     put(`/jobs/${jobId}/edits`, edits),
 
@@ -158,6 +160,8 @@ export const api = {
   createCampaign: (name: string, description?: string, rules?: string) =>
     post<Campaign>('/campaigns', { name, description, rules }),
   getCampaign: (id: string) => get<CampaignFull>(`/campaigns/${id}`),
+    refreshCampaignVideo: (campaignId: string, videoId: number) =>
+      post<{ ok: boolean; job_id: string; message: string }>(`/campaigns/${campaignId}/videos/${videoId}/refresh`),
   updateCampaign: (id: string, name?: string, description?: string, rules?: string) =>
     put<{ ok: boolean }>(`/campaigns/${id}`, { name, description, rules }),
   deleteCampaign: (id: string) =>
@@ -204,7 +208,7 @@ export const api = {
   getCampaignHooks: (id: string) =>
     get<unknown[]>(`/campaigns/${id}/hooks`),
   getCampaignInsights: (id: string) =>
-    get<{ feature_weights: Record<string, number> }>(`/campaigns/${id}/insights`),
+    get<{ feature_weights: Record<string, number>; feedback: { total: number; approvals: number; rejections: number; net: number } }>(`/campaigns/${id}/insights`),
     
   // Analyzer
   getVideoRanking: (id: string) =>

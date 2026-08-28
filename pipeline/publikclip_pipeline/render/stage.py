@@ -104,6 +104,10 @@ class RenderStage(Stage):
                     lufs=ctx.settings.lufs_target,
                     true_peak=ctx.settings.true_peak_db,
                     src_w=src_w, src_h=src_h,
+                    progress=lambda fraction: ctx.emit(
+                        (i + fraction) / max(1, len(clips)),
+                        f"Rendering clip {i + 1}/{len(clips)}…",
+                    ),
                 )
             except RuntimeError as err:
                 raise StageError(str(err)) from err

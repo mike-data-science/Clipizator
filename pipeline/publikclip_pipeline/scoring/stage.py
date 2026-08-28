@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..candidates.windows import detect_candidate_types
 from ..jobs.queue import Stage, StageContext, StageError
 from ..music import brief as music_brief
 from . import constants as constants_mod
@@ -60,6 +61,36 @@ def _window_pct(values: np.ndarray, grid_sec: float, start: float, end: float) -
     a, b = int(start / grid_sec), max(int(start / grid_sec) + 1, int(end / grid_sec))
     window_mean = float(np.mean(values[a : min(b, len(values))])) if a < len(values) else 0.0
     return float(np.mean(values <= window_mean))
+
+
+DEEP_JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string", "description": "short title idea for this candidate clip"},
+        "hook": {"type": "string", "description": "first 1-2 lines that hook the viewer in the first 3 seconds"},
+        "story_angle": {"type": "string", "description": "one sentence describing why this moment is compelling"},
+        "why_it_hits": {"type": "array", "items": {"type": "string"}, "description": "three short reasons the moment works"},
+        "risk_flags": {"type": "array", "items": {"type": "string"}, "description": "possible reasons this could underperform"},
+        "recommended_length": {"type": "integer", "description": "target clip length in seconds"},
+        "cta": {"type": "string", "description": "optional on-screen CTA, leave blank if none"},
+    },
+    "required": ["headline", "hook", "story_angle", "why_it_hits", "risk_flags", "recommended_length", "cta"],
+}
+
+
+def _deep_judge_prompt(transcript: str, candidate_types: list[str], context: dict) -> str:
+    """Deep pass prompt: only a candidate slice, never the whole source transcript."""
+    types = ", ".join(candidate_types) if candidate_types else "story"
+    duration = float(context.get("duration", 0) or 0)
+    return (
+        "You are running a second-pass clip intelligence pass on a single candidate slice from a longer video. "
+        "Use ONLY this candidate transcript; never send the full long-form source to the model.\n\n"
+        f"Candidate type signals: {types}\n"
+        f"Candidate duration: {duration:.0f}s\n\n"
+        f"Transcript:\n{transcript}\n\n"
+        "Decide how this clip should be framed for short-form performance. "
+        "Return concise, structured output for: headline, hook, story angle, why it hits, risk flags, recommended length, and CTA."
+    )
 
 
 class ScoreStage(Stage):
@@ -153,6 +184,7 @@ class ScoreStage(Stage):
                 "duration": end - start,
                 "events_desc": _events_desc(window_events),
             }
+            candidate_types = cand.get("candidate_types") or detect_candidate_types(flat)
             try:
                 if llm_mode == "manual":
                     if manual_scores and i not in manual_scores:
@@ -183,6 +215,7 @@ class ScoreStage(Stage):
                     "end": end,
                     "curve_score": cand["curve_score"],
                     "channel_scores": cand["channel_scores"],
+                    "candidate_types": candidate_types,
                     "t1_raw": t1,
                     "subscores": {k: round(v, 2) for k, v in sub.items()},
                     "adjustments": adjustments,
@@ -206,6 +239,22 @@ class ScoreStage(Stage):
 
         scored.sort(key=_text_rank, reverse=True)
         finalists = scored[:SELECT_COUNT]
+
+        # Second-pass candidate intelligence on finalists only. This keeps the
+        # judge slice-scoped and avoids sending the full session transcript to
+        # the model. The output is structured metadata used by ranking and UI.
+        supports_deep_judge = bool(client and getattr(client, "backend", None) in {"ollama", "gemini"})
+        for j, entry in enumerate(finalists):
+            if supports_deep_judge:
+                try:
+                    entry["deep_pass"] = client.generate_json(
+                        _deep_judge_prompt(entry["transcript"], entry.get("candidate_types", []), {"duration": entry["end"] - entry["start"]}),
+                        DEEP_JUDGE_SCHEMA,
+                    )
+                except Exception:  # noqa: BLE001
+                    entry["deep_pass"] = None
+            else:
+                entry["deep_pass"] = None
 
         # T2 visual pass + music brief on finalists only.
         supports_vision = client.backend == "gemini" if client else False
@@ -233,6 +282,12 @@ class ScoreStage(Stage):
                     except Exception:  # noqa: BLE001 — visual is optional evidence
                         visual = None
             entry["t2"] = visual
+            if entry.get("deep_pass"):
+                entry["headline"] = entry["deep_pass"].get("headline")
+                entry["hook_line"] = entry["deep_pass"].get("hook")
+                entry["story_angle"] = entry["deep_pass"].get("story_angle")
+                entry["why_it_hits"] = entry["deep_pass"].get("why_it_hits")
+                entry["risk_flags"] = entry["deep_pass"].get("risk_flags")
 
             platform_scores, comp_adjustments = rubric.composite(
                 entry["subscores"], entry["curve_score"], entry["heatmap_pct"], visual,
@@ -274,6 +329,9 @@ class ScoreStage(Stage):
         finalists.sort(key=lambda e: e["score"], reverse=True)
         for entry in finalists:
             entry.pop("transcript", None)  # bulky; review UI re-slices from diarize
+
+        if client and hasattr(client, "unload"):
+            client.unload()
 
         return {
             "llm_mode": llm_mode,

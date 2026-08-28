@@ -101,6 +101,21 @@ CREATE TABLE IF NOT EXISTS campaign_clips (
     FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
 );
 
+CREATE TABLE IF NOT EXISTS user_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id TEXT NOT NULL,
+    video_url TEXT,
+    start_sec REAL,
+    end_sec REAL,
+    job_id TEXT,
+    clip_index INTEGER,
+    label TEXT NOT NULL,
+    reason TEXT,
+    score REAL,
+    created_at REAL NOT NULL,
+    UNIQUE(campaign_id, job_id, clip_index, label, created_at)
+);
+
 CREATE TABLE IF NOT EXISTS moment_analysis (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id TEXT NOT NULL,
@@ -148,6 +163,7 @@ CREATE TABLE IF NOT EXISTS moment_analysis (
     predicted_virality REAL,
     recommendation_score REAL,
     uncertainty REAL,
+    feedback_adjustment REAL DEFAULT 0,
     -- Performance linkage
     has_clip INTEGER DEFAULT 0,
     clip_views INTEGER,
@@ -173,6 +189,7 @@ _MIGRATIONS = [
     "ALTER TABLE campaign_clips ADD COLUMN traffic_source TEXT",
     "ALTER TABLE campaign_videos ADD COLUMN views INTEGER",
     "ALTER TABLE campaign_videos ADD COLUMN likes INTEGER",
+    "ALTER TABLE moment_analysis ADD COLUMN feedback_adjustment REAL DEFAULT 0",
 ]
 
 
@@ -265,6 +282,16 @@ def get_campaign_dir(campaign_id: str) -> str:
     return campaign_id
 
 
+def campaign_id_for_dir(campaign_dir: str | None) -> str | None:
+    """Return the canonical campaign ID for a job’s campaign directory."""
+    if not campaign_dir:
+        return None
+    for campaign in list_campaigns():
+        if get_campaign_dir(campaign["id"]) == campaign_dir:
+            return campaign["id"]
+    return None
+
+
 def get_campaign(campaign_id: str) -> dict | None:
     with _connect() as conn:
         row = conn.execute(
@@ -325,10 +352,59 @@ def update_campaign(
 def delete_campaign(campaign_id: str) -> bool:
     with _connect() as conn:
         conn.execute("DELETE FROM moment_analysis WHERE campaign_id = ?", (campaign_id,))
+        conn.execute("DELETE FROM user_feedback WHERE campaign_id = ?", (campaign_id,))
         conn.execute("DELETE FROM campaign_clips WHERE campaign_id = ?", (campaign_id,))
         conn.execute("DELETE FROM campaign_videos WHERE campaign_id = ?", (campaign_id,))
         cur = conn.execute("DELETE FROM campaigns WHERE id = ?", (campaign_id,))
     return cur.rowcount > 0
+
+
+def record_feedback(
+    campaign_id: str,
+    *,
+    label: str,
+    job_id: str | None = None,
+    clip_index: int | None = None,
+    video_url: str | None = None,
+    start_sec: float | None = None,
+    end_sec: float | None = None,
+    reason: str | None = None,
+    score: float | None = None,
+) -> dict:
+    """Store a thumbs-up/thumbs-down review for a candidate clip or moment."""
+    now = time.time()
+    with _connect() as conn:
+        row = conn.execute(
+            "INSERT INTO user_feedback"
+            " (campaign_id, video_url, start_sec, end_sec, job_id, clip_index, label, reason, score, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                campaign_id, video_url, start_sec, end_sec, job_id, clip_index,
+                label, reason, score, now,
+            ),
+        )
+    return {
+        "id": row.lastrowid,
+        "campaign_id": campaign_id,
+        "video_url": video_url,
+        "start_sec": start_sec,
+        "end_sec": end_sec,
+        "job_id": job_id,
+        "clip_index": clip_index,
+        "label": label,
+        "reason": reason,
+        "score": score,
+        "created_at": now,
+    }
+
+
+def campaign_feedback(campaign_id: str) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM user_feedback WHERE campaign_id = ? ORDER BY created_at DESC",
+            (campaign_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---- Videos -----------------------------------------------------------------
@@ -610,13 +686,13 @@ def store_moments(campaign_id: str, moments: list[dict]) -> int:
                     "  llm_hook_score, llm_funniness, llm_shock, llm_curiosity_gap,"
                     "  llm_value_score, llm_summary, llm_self_contained, llm_hook_type,"
                     "  sim_to_top_clips,"
-                    "  predicted_virality, recommendation_score, uncertainty,"
+                    "  predicted_virality, recommendation_score, uncertainty, feedback_adjustment,"
                     "  has_clip, clip_views, clip_role,"
                     "  analyzed_at)"
                     " VALUES ("
                     "  ?, ?, ?, ?,"
                     "  ?, ?,"
-                    "  ?, ?, ?,"
+                    "  ?, ?, ?, ?,"
                     "  ?, ?, ?,"
                     "  ?, ?, ?,"
                     "  ?,"
@@ -643,6 +719,7 @@ def store_moments(campaign_id: str, moments: list[dict]) -> int:
                         m.get("llm_value_score"), m.get("llm_summary"), m.get("llm_self_contained"), m.get("llm_hook_type"),
                         m.get("sim_to_top_clips"),
                         m.get("predicted_virality"), m.get("recommendation_score"), m.get("uncertainty"),
+                        m.get("feedback_adjustment", 0.0),
                         m.get("has_clip", 0), m.get("clip_views"), m.get("clip_role"),
                         now,
                     ),
