@@ -99,8 +99,20 @@ PUBLIKCLIP_SERVER_URL=http://127.0.0.1:8000 python laptop_worker.py
 # ssh -N -L 8001:127.0.0.1:8000 user@4.231.114.220
 # in a second terminal:
 # python laptop_worker.py --server-url http://127.0.0.1:8001
+# or explicitly:
+# python laptop_worker.py --server-url http://127.0.0.1:8001 --cookies-from-browser chrome
+# or use an exported Netscape cookies file (keep it private):
+# python laptop_worker.py --server-url http://127.0.0.1:8001 --cookies C:\path\to\cookies.txt
 # test the connection once without waiting:
 # python laptop_worker.py --server-url http://127.0.0.1:8001 --once
+# yt-dlp uses the laptop's normal internet connection by default.
+# Optional SOCKS proxy for yt-dlp (only with an SSH -D tunnel):
+# ssh -N -D 1080 user@4.231.114.220
+# PUBLIKCLIP_YTDLP_PROXY=socks5://127.0.0.1:1080 python laptop_worker.py --server-url http://127.0.0.1:8001
+# Windows YouTube login: close the browser first, then run one of:
+# set PUBLIKCLIP_COOKIES_FROM_BROWSER=chrome
+# set PUBLIKCLIP_COOKIES_FROM_BROWSER=edge
+# python laptop_worker.py --server-url http://127.0.0.1:8001
 
 # app
 cd app && npm install && npm run tauri dev

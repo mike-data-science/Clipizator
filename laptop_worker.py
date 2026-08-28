@@ -6,6 +6,9 @@ import argparse
 import requests
 from pathlib import Path
 
+for _proxy_name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "PUBLIKCLIP_YTDLP_PROXY"):
+    os.environ.pop(_proxy_name, None)
+
 # Add pipeline to sys.path so we can use its ytdlp tools
 sys.path.insert(0, str(Path(__file__).resolve().parent / "pipeline"))
 
@@ -79,9 +82,17 @@ def download_and_upload(job, server_url):
 def main():
     parser = argparse.ArgumentParser(description="Download queued campaign clips on this laptop.")
     parser.add_argument("--server-url", default=DEFAULT_VM_URL, help="Backend URL, e.g. http://127.0.0.1:8001")
+    parser.add_argument("--cookies-from-browser", choices=("chrome", "edge", "firefox", "brave", "chromium"), help="Read YouTube login cookies from this browser")
+    parser.add_argument("--cookies", help="Path to an exported Netscape cookies.txt file")
     parser.add_argument("--once", action="store_true", help="Poll once and exit")
     args = parser.parse_args()
+    if args.cookies_from_browser:
+        os.environ["PUBLIKCLIP_COOKIES_FROM_BROWSER"] = args.cookies_from_browser
+    if args.cookies:
+        os.environ["PUBLIKCLIP_COOKIES_FILE"] = args.cookies
+    auth_mode = args.cookies_from_browser or args.cookies or "cookies.txt fallback"
     print(f"Starting Laptop Worker. Polling {args.server_url} for new downloads...")
+    print(f"yt-dlp authentication: {auth_mode}")
     while True:
         jobs = get_jobs(args.server_url)
         if jobs:
