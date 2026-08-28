@@ -6,6 +6,9 @@ import argparse
 import requests
 from pathlib import Path
 
+for _proxy_name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "PUBLIKCLIP_YTDLP_PROXY"):
+    os.environ.pop(_proxy_name, None)
+
 # Add pipeline to sys.path so we can use its ytdlp tools
 sys.path.insert(0, str(Path(__file__).resolve().parent / "pipeline"))
 
@@ -24,16 +27,19 @@ def get_jobs(server_url):
     return []
 
 def download_and_upload(job, server_url):
-    campaign_id = job["campaign_id"]
-    clip_id = job["clip_id"]
+    job_type = job.get("type", "clip")
+    campaign_id = job.get("campaign_id")
+    clip_id = job.get("clip_id")
+    job_id = job.get("job_id")
     url = job["url"]
     role = job.get("role", "competitor")
+    item_id = clip_id or job_id
     
-    print(f"\n--- Processing Job: {clip_id} for campaign {campaign_id} ---")
+    print(f"\n--- Processing {job_type}: {item_id} for campaign {campaign_id} ---")
     print(f"URL: {url}")
     
-    video_path = Path(f"temp_{clip_id}.mp4")
-    meta_path = Path(f"temp_{clip_id}.json")
+    video_path = Path(f"temp_{item_id}.mkv")
+    meta_path = Path(f"temp_{item_id}.json")
     
     try:
         # 1. Fetch Meta
@@ -53,12 +59,17 @@ def download_and_upload(job, server_url):
         print("Uploading to Azure VM...")
         with open(video_path, "rb") as vf, open(meta_path, "rb") as mf:
             files = {
-                "video": ("video.mp4", vf, "video/mp4"),
+                "video": ("video.mkv", vf, "video/x-matroska"),
                 "metadata": ("meta.json", mf, "application/json")
             }
             data = {"role": role}
             
-            resp = requests.post(f"{server_url}/api/worker/upload/{campaign_id}/{clip_id}", files=files, data=data)
+            upload_url = (
+                f"{server_url}/api/worker/upload-source/{job_id}"
+                if job_type == "source"
+                else f"{server_url}/api/worker/upload/{campaign_id}/{clip_id}"
+            )
+            resp = requests.post(upload_url, files=files, data=data)
             
             if resp.status_code == 200:
                 print("Successfully uploaded to VM! VM has resumed analysis.")
@@ -79,13 +90,27 @@ def download_and_upload(job, server_url):
 def main():
     parser = argparse.ArgumentParser(description="Download queued campaign clips on this laptop.")
     parser.add_argument("--server-url", default=DEFAULT_VM_URL, help="Backend URL, e.g. http://127.0.0.1:8001")
+    parser.add_argument("--cookies-from-browser", choices=("chrome", "edge", "firefox", "brave", "chromium"), help="Read YouTube login cookies from this browser")
+    parser.add_argument("--cookies", help="Path to an exported Netscape cookies.txt file")
     parser.add_argument("--once", action="store_true", help="Poll once and exit")
     args = parser.parse_args()
+    if args.cookies_from_browser:
+        os.environ["PUBLIKCLIP_COOKIES_FROM_BROWSER"] = args.cookies_from_browser
+    if args.cookies:
+        os.environ["PUBLIKCLIP_COOKIES_FILE"] = args.cookies
+    auth_mode = args.cookies_from_browser or args.cookies or "cookies.txt fallback"
     print(f"Starting Laptop Worker. Polling {args.server_url} for new downloads...")
+    print(f"yt-dlp authentication: {auth_mode}")
+    print("Download quality: best available video + audio, merged without transcoding")
     while True:
         jobs = get_jobs(args.server_url)
         if jobs:
             for job in jobs:
+                required = ("url", "job_id") if job.get("type") == "source" else ("campaign_id", "clip_id", "url")
+                missing = [field for field in required if not job.get(field)]
+                if missing:
+                    print(f"Skipping malformed worker job; missing: {', '.join(missing)}")
+                    continue
                 download_and_upload(job, args.server_url)
         elif args.once:
             print("No queued worker jobs.")

@@ -207,12 +207,15 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
             "-J", 
             "--no-playlist", 
             "--no-warnings",
-            "--proxy", "socks5://127.0.0.1:1080",
             "--extractor-args", "youtube:player_client=android"
         ]
+        args.extend(_proxy_args())
+        args.extend(_cookie_args())
         repo_root = Path(__file__).resolve().parent.parent.parent.parent
-        cookies_path = repo_root / "cookies.txt"
-        if cookies_path.exists():
+        cookies_path = _cookie_file() or (repo_root / "cookies.txt")
+        if _cookie_args():
+            pass
+        elif cookies_path.exists():
             args.extend(["--cookies", str(cookies_path)])
         else:
             progress(0.0, f"Warning: cookies.txt not found at {cookies_path}")
@@ -259,6 +262,21 @@ DOWNLOAD_FORMAT = "bestvideo+bestaudio/best"
 _PCT_RE = re.compile(r"\[download\]\s+([\d.]+)%")
 
 
+def _proxy_args() -> list[str]:
+    proxy = os.environ.get("PUBLIKCLIP_YTDLP_PROXY", "").strip()
+    return ["--proxy", proxy] if proxy else []
+
+
+def _cookie_args() -> list[str]:
+    browser = os.environ.get("PUBLIKCLIP_COOKIES_FROM_BROWSER", "").strip()
+    return ["--cookies-from-browser", browser] if browser else []
+
+
+def _cookie_file() -> Path | None:
+    configured = os.environ.get("PUBLIKCLIP_COOKIES_FILE", "").strip()
+    return Path(configured).expanduser() if configured else None
+
+
 def download(url: str, out_path: Path, progress: ProgressFn) -> None:
     bin_path = ensure_ytdlp(progress)
     try:
@@ -275,14 +293,17 @@ def download(url: str, out_path: Path, progress: ProgressFn) -> None:
         "--no-playlist",
         "--no-warnings",
         "--newline",
-        "--proxy", "socks5://127.0.0.1:1080",
         "--extractor-args", "youtube:player_client=android"
     ]
+    args.extend(_proxy_args())
+    args.extend(_cookie_args())
     if ffmpeg:
         args.extend(["--ffmpeg-location", ffmpeg])
     repo_root = Path(__file__).resolve().parent.parent.parent.parent
-    cookies_path = repo_root / "cookies.txt"
-    if cookies_path.exists():
+    cookies_path = _cookie_file() or (repo_root / "cookies.txt")
+    if _cookie_args():
+        pass
+    elif cookies_path.exists():
         args.extend(["--cookies", str(cookies_path)])
     else:
         progress(0.0, f"Warning: cookies.txt not found at {cookies_path}")
