@@ -1,2 +1,3 @@
 ./pipeline
 python-multipart
+pytest>=8

@@ -80,8 +80,10 @@ class Settings:
     camera: CameraSettings = field(default_factory=CameraSettings)
     lufs_target: float = -14.0  # decision #8: configurable per destination
     true_peak_db: float = -1.0
-    llm_mode: str = "gemini"  # 'gemini' (BYO key) | 'ollama' (local fallback)
+    llm_mode: str = "ollama"  # 'ollama' is the default local-first judge; 'gemini' remains fallback
     gemini_model: str = "gemini-1.5-flash-8b"
+    ollama_model: str = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+    ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
     caption_preset: str = "classic"
     asr_model: str = "small"  # whisper model size
     # jrgillick laughter specialist: 10 ms precision but ~300k CPU forward
@@ -97,6 +99,8 @@ class Settings:
             "true_peak_db": self.true_peak_db,
             "llm_mode": self.llm_mode,
             "gemini_model": self.gemini_model,
+            "ollama_model": self.ollama_model,
+            "ollama_base_url": self.ollama_base_url,
             "caption_preset": self.caption_preset,
             "asr_model": self.asr_model,
             "laughter_specialist": self.laughter_specialist,
@@ -109,8 +113,10 @@ class Settings:
             camera=cam,
             lufs_target=data.get("lufs_target", -14.0),
             true_peak_db=data.get("true_peak_db", -1.0),
-            llm_mode=data.get("llm_mode", "gemini"),
+            llm_mode=data.get("llm_mode", "ollama"),
             gemini_model=data.get("gemini_model", "gemini-1.5-flash-8b"),
+            ollama_model=data.get("ollama_model", os.environ.get("OLLAMA_MODEL", "qwen3:8b")),
+            ollama_base_url=data.get("ollama_base_url", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")),
             caption_preset=data.get("caption_preset", "classic"),
             asr_model=data.get("asr_model", "small"),
             laughter_specialist=data.get("laughter_specialist", False),

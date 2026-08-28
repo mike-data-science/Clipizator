@@ -15,6 +15,5 @@
 .youtube.com	TRUE	/	TRUE	1803245025	__Secure-YNID	21.YT=Gif5c_Mu2aHyaYPQfm2qzyHHhsCZanEQDpWp8t8GlHA9wfDMSdXrwoG0UzHXUfHKHFfm5pYpkveZnLGri-rVpieqMwk71TlaHdiWxFz5kDLY7OcCQH_TlJpH1ipM--X-QDfcgpMYdEexBDBm3-UQRVmOc8Sx4plPRCVdPWGi6MoPxRbxbuzlA6uT-1o9kgx1T_5ejX9FcJe438ZndJS-W5MwMb0oYSitsHaA9BONqe2Xnaaf7SyDGjqSlAnVAAJgrx_SVwF5mZHxlk0PYm9DPYaiI1DXQEeR-2gmbE7t7XJoTs13_2dmMoV1xLRhYIRzGX9saVVQ7jKrGF6oq1ysJg
 .youtube.com	TRUE	/	TRUE	1850580859	__Secure-YT_TVFAS	t=495034&s=2
 .youtube.com	TRUE	/	TRUE	0	wide	1
-.youtube.com	TRUE	/	TRUE	1787750438	GPS	1
 .youtube.com	TRUE	/	TRUE	0	YSC	9dWie1fsxBY
 .youtube.com	TRUE	/tv	TRUE	1820340859	__Secure-YT_DERP	CNPOsufjBA%3D%3D

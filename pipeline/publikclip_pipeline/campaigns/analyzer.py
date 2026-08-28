@@ -77,7 +77,7 @@ def _extract_windows(segments: list[dict], duration: float) -> list[dict]:
 
 def prepare_analysis(
     campaign_id: str,
-    llm_mode: str = "gemini",
+    llm_mode: str = "ollama",
     gemini_model: str = "gemini-1.5-flash-8b",
     progress: ProgressFn | None = None,
     video_urls: list[str] | None = None,
@@ -231,7 +231,8 @@ def complete_analysis(
         # Active learning recommendation score (alpha = 0.7, favor predicted)
         alpha = 0.7
         rec = (alpha * predicted) + ((1 - alpha) * (uncertainty * 10.0))
-        c["recommendation_score"] = round(rec, 3)
+        c["feedback_adjustment"] = learning.feedback_adjustment(campaign_id, c)
+        c["recommendation_score"] = round(max(0.0, min(10.0, rec + c["feedback_adjustment"])), 3)
         
     # Store everything
     emit(0.95, "Saving results…")

@@ -39,6 +39,12 @@ export interface Clip {
   signals_missing: string[]
   confidence: string
   summary: string
+  headline?: string
+  hook_line?: string
+  story_angle?: string
+  why_it_hits?: string[]
+  risk_flags?: string[]
+  candidate_types?: string[]
   arousal_pct: number
   heatmap_pct: number | null
   curve_score: number
@@ -232,6 +238,9 @@ export interface CampaignVideo {
   views?: number
   has_ingest?: boolean
   has_asr?: boolean
+  width?: number
+  height?: number
+  media_url?: string
 }
 
 export interface CampaignClip {
@@ -340,6 +349,7 @@ export interface CampaignMoment {
   predicted_virality: number
   recommendation_score: number
   uncertainty: number
+  feedback_adjustment?: number
   
   has_clip: number
   clip_views?: number

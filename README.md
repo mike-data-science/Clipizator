@@ -86,7 +86,21 @@ bar, and a caption-capable static ffmpeg is fetched automatically.
 ```sh
 # pipeline
 cd pipeline && uv sync && uv run pytest
+# or, with pip requirements installed:
+# pip install -r ../requirements.txt && python -m pytest
 uv run publikclip run "https://www.youtube.com/watch?v=..."
+
+# optional laptop worker for downloading campaign sources
+# same PC as the backend:
+PUBLIKCLIP_SERVER_URL=http://127.0.0.1:8000 python laptop_worker.py
+# separate laptop: replace the address with the backend PC's LAN IP
+# PUBLIKCLIP_SERVER_URL=http://192.168.1.50:8000 python laptop_worker.py
+# VM through an SSH tunnel from the laptop:
+# ssh -N -L 8001:127.0.0.1:8000 user@4.231.114.220
+# in a second terminal:
+# python laptop_worker.py --server-url http://127.0.0.1:8001
+# test the connection once without waiting:
+# python laptop_worker.py --server-url http://127.0.0.1:8001 --once
 
 # app
 cd app && npm install && npm run tauri dev

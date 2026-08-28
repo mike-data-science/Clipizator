@@ -49,6 +49,7 @@ export default function Review({ results, onBack, onRestyle }: Props) {
   const clips = results.score?.clips ?? []
   const [selected, setSelected] = useState(0)
   const [exported, setExported] = useState<Record<number, string>>({})
+  const [feedbackStatus, setFeedbackStatus] = useState<Record<number, 'approved' | 'rejected' | 'neutral'>>({})
   const currentPreset = results.render?.caption_preset ?? 'classic'
   const [restylePreset, setRestylePreset] = useState(currentPreset)
   const [restyleCamera, setRestyleCamera] = useState('cut')
@@ -66,6 +67,17 @@ export default function Review({ results, onBack, onRestyle }: Props) {
     const title = `${results.ingest?.title ?? 'clip'} ${fmtTime(clip.start)}`
     const dest = await api.exportClip(results.job_id, out.clip, title)
     setExported((prev) => ({ ...prev, [out.clip]: dest }))
+  }
+
+  async function submitDecision(label: 'approved' | 'rejected' | 'neutral', reason?: string) {
+    if (!pair.out) return
+    try {
+      await api.submitClipFeedback(results.job_id, pair.out.clip, label, reason)
+      setFeedbackStatus((prev) => ({ ...prev, [pair.out!.clip]: label }))
+    } catch (err) {
+      console.error('clip feedback failed', err)
+      alert(err instanceof Error ? err.message : 'Could not save the clip decision.')
+    }
   }
 
   if (editing !== null) {
@@ -166,6 +178,38 @@ export default function Review({ results, onBack, onRestyle }: Props) {
               <button className="btn-secondary" onClick={() => setEditing(pair.out!.clip)}>
                 ✎ EDIT CLIP (bounds · cuts · visuals)
               </button>
+              <div className="feedback-group" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                <button
+                  className="btn-secondary"
+                  style={{
+                    borderColor: feedbackStatus[pair.out.clip] === 'approved' ? '#5ee7a5' : undefined,
+                    background: feedbackStatus[pair.out.clip] === 'approved' ? 'rgba(94, 231, 165, 0.12)' : undefined,
+                  }}
+                  onClick={() => submitDecision('approved', 'Strong clip candidate')}
+                >
+                  ✓ APPROVE
+                </button>
+                <button
+                  className="btn-secondary"
+                  style={{
+                    borderColor: feedbackStatus[pair.out.clip] === 'rejected' ? '#ff8a8a' : undefined,
+                    background: feedbackStatus[pair.out.clip] === 'rejected' ? 'rgba(255, 138, 138, 0.12)' : undefined,
+                  }}
+                  onClick={() => submitDecision('rejected', 'Weak clip candidate')}
+                >
+                  ✕ REJECT
+                </button>
+                <button
+                  className="btn-secondary"
+                  style={{
+                    borderColor: feedbackStatus[pair.out.clip] === 'neutral' ? '#f8d66d' : undefined,
+                    background: feedbackStatus[pair.out.clip] === 'neutral' ? 'rgba(248, 214, 109, 0.12)' : undefined,
+                  }}
+                  onClick={() => submitDecision('neutral', 'Keep for later review')}
+                >
+                  ○ HOLD
+                </button>
+              </div>
               <button className="btn-primary" onClick={() => doExport(pair.out!, pair.clip!)}>
                 {exported[pair.out.clip] ? 'EXPORTED ✓' : 'EXPORT MP4'}
               </button>
@@ -192,6 +236,46 @@ export default function Review({ results, onBack, onRestyle }: Props) {
               </div>
             </div>
             <p className="audit-summary">{pair.clip.summary}</p>
+
+            {(pair.clip.headline || pair.clip.hook_line || pair.clip.story_angle || pair.clip.why_it_hits?.length || pair.clip.risk_flags?.length) && (
+              <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                <p className="audit-label">CLIP INTELLIGENCE</p>
+                {pair.clip.headline && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 4 }}>HEADLINE</div>
+                    <div>{pair.clip.headline}</div>
+                  </div>
+                )}
+                {pair.clip.hook_line && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 4 }}>HOOK</div>
+                    <div>{pair.clip.hook_line}</div>
+                  </div>
+                )}
+                {pair.clip.story_angle && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 4 }}>STORY ANGLE</div>
+                    <div>{pair.clip.story_angle}</div>
+                  </div>
+                )}
+                {pair.clip.why_it_hits && pair.clip.why_it_hits.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 4 }}>WHY IT HITS</div>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {pair.clip.why_it_hits.map((reason, i) => <li key={i}>{reason}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {pair.clip.risk_flags && pair.clip.risk_flags.length > 0 && (
+                  <div>
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 4 }}>RISK FLAGS</div>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {pair.clip.risk_flags.map((risk, i) => <li key={i}>{risk}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
 
             <p className="audit-label">SUBSCORES</p>
             <div className="subs">

@@ -521,7 +521,7 @@ async def run_queue_transcribe(body: dict):
 @app.post("/api/jobs/upload")
 async def upload_and_run(
     video: UploadFile = File(...),
-    llm: str = "gemini",
+    llm: str = "ollama",
     gemini_model: str | None = None,
     captions: str = "classic",
     asr_model: str | None = None,
@@ -780,6 +780,39 @@ async def ig_reject(body: dict):
     return {"ok": True}
 
 
+@app.post("/api/jobs/{job_id}/clips/{clip_index}/feedback")
+async def clip_feedback(job_id: str, clip_index: int, body: dict | None = None):
+    """Store a review decision for a clip so the ranking model can learn."""
+    body = body or {}
+    label = body.get("label", "approved")
+    if label not in {"approved", "rejected", "neutral"}:
+        raise HTTPException(400, "label must be approved, rejected, or neutral")
+    job = queue.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    score_data = queue.read_checkpoint(job, "score", 1)
+    if not score_data:
+        raise HTTPException(400, "job has no score checkpoint")
+    clips = score_data.get("clips", [])
+    if not 0 <= clip_index < len(clips):
+        raise HTTPException(400, "clip index out of range")
+    clip = clips[clip_index]
+    from publikclip_pipeline.campaigns import store
+    campaign_id = store.campaign_id_for_dir(job.campaign_dir) or "standalone"
+    record = store.record_feedback(
+        campaign_id,
+        label=label,
+        job_id=job_id,
+        clip_index=clip_index,
+        video_url=clip.get("video_url"),
+        start_sec=clip.get("start"),
+        end_sec=clip.get("end"),
+        reason=body.get("reason"),
+        score=float(clip.get("score", 0.0)),
+    )
+    return {"ok": True, "feedback": record}
+
+
 # -- Campaigns & Analytics --
 
 @app.get("/api/campaigns")
@@ -811,16 +844,40 @@ def get_campaign(campaign_id: str):
             job = queue.get_job(job_id)
             if job and job.dir.exists():
                 job_dir = job.dir
-                if (job_dir / "ingest.json").exists():
+                ingest = _read_stage(job_dir, "ingest")
+                if ingest:
                     has_ingest = True
                 if (job_dir / "asr.json").exists():
                     has_asr = True
+                if ingest:
+                    probe = ingest.get("probe") or {}
+                    v["width"] = probe.get("width")
+                    v["height"] = probe.get("height")
+                    media_path = ingest.get("media_path")
+                    if media_path:
+                        media_name = str(media_path).replace("\\", "/").rsplit("/", 1)[-1]
+                        v["media_url"] = f"/media/jobs/{job.campaign_dir + '/' if job.campaign_dir else ''}{job.id}/{media_name}"
         v["has_ingest"] = has_ingest
         v["has_asr"] = has_asr
         
     # Include moments too
     c["moments"] = store.campaign_moments(campaign_id, limit=100)
     return c
+
+@app.post("/api/campaigns/{campaign_id}/videos/{video_id}/refresh")
+async def refresh_campaign_video(campaign_id: str, video_id: int):
+    from publikclip_pipeline.campaigns import store
+
+    video = next((v for v in store.campaign_videos(campaign_id) if v["id"] == video_id), None)
+    if not video or not video.get("job_id"):
+        raise HTTPException(404, "campaign video has no pipeline job")
+    job = queue.get_job(video["job_id"])
+    if not job:
+        raise HTTPException(404, "pipeline job not found")
+    queue.invalidate_checkpoints(job)
+    queue.set_job_status(job.id, "pending")
+    threading.Thread(target=_run_pipeline_thread, args=(job,), daemon=True).start()
+    return {"ok": True, "job_id": job.id, "message": "source refresh and re-render started"}
 
 @app.put("/api/campaigns/{campaign_id}")
 def update_campaign(campaign_id: str, body: dict):
@@ -1066,7 +1123,7 @@ async def analyze_campaign(campaign_id: str, request: Request):
         pass
         
     from publikclip_pipeline.campaigns import analyzer
-    llm = body.get("llm_mode", "gemini")
+    llm = body.get("llm_mode", "ollama")
     gemini_model = body.get("gemini_model", "gemini-3.6-flash")
     video_urls = body.get("video_urls", None)
     
@@ -1188,8 +1245,10 @@ def get_campaign_hooks(campaign_id: str):
 def get_campaign_insights(campaign_id: str):
     from publikclip_pipeline.campaigns import store, learning
     weights = learning.compute_feature_weights(campaign_id)
-    # Just return the feature importances for now, we can add LLM summary later
-    return {"feature_weights": weights}
+    return {
+        "feature_weights": weights,
+        "feedback": learning.feedback_summary(campaign_id),
+    }
 
 
 @app.get("/api/campaigns/{campaign_id}/analyzer/video-ranking")

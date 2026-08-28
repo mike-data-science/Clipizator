@@ -274,7 +274,8 @@ def render_clip_edit(job_dir: Path, clip_idx: int, emit) -> dict:
     vchain = (
         f"[vc]sendcmd=f={renderer._q(cmd_path)},"  # noqa: SLF001
         f"crop@c=w={boxes[0][0]}:h={boxes[0][1]}:x={boxes[0][2]}:y={boxes[0][3]},"
-        f"scale={renderer.OUT_W}:{renderer.OUT_H}:flags=lanczos,setsar=1[vb]"
+        f"hwupload_cuda,scale_cuda={renderer.OUT_W}:{renderer.OUT_H},"
+        f"hwdownload,format=yuv420p,setsar=1[vb]"
     )
     graph.append(vchain)
 
@@ -287,7 +288,9 @@ def render_clip_edit(job_dir: Path, clip_idx: int, emit) -> dict:
         vlabel = "vf"
     graph.append(f"[ac]loudnorm=I={settings.lufs_target}:TP={settings.true_peak_db}:LRA=11[af]")
 
-    if renderer.videotoolbox_available():
+    if renderer.nvenc_available():
+        vcodec = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", str(renderer.X264_CRF)]
+    elif renderer.videotoolbox_available():
         vcodec = ["-c:v", "h264_videotoolbox", "-b:v", renderer.VT_BITRATE, "-allow_sw", "1"]
     else:
         vcodec = ["-c:v", "libx264", "-preset", "medium", "-crf", str(renderer.X264_CRF)]
@@ -303,12 +306,14 @@ def render_clip_edit(job_dir: Path, clip_idx: int, emit) -> dict:
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart", "-map_metadata", "-1",
+        "-progress", "pipe:1", "-nostats",
         str(out_path),
     ]
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=1800)
+    renderer._run_ffmpeg(  # noqa: SLF001
+        args, remap.output_duration, 1800,
+        lambda fraction: emit(fraction),
+    )
     cmd_path.unlink(missing_ok=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"Clip render failed: {(proc.stderr or '')[-800:]}")
 
     check = renderer.verify_output(out_path, remap.output_duration)
     entry = {

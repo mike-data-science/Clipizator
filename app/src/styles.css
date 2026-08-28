@@ -494,6 +494,7 @@ body {
   background: linear-gradient(90deg, var(--amber-dim), var(--amber));
   transition: width 0.4s ease;
 }
+.deck-row.idle .deck-fill { width: 0 !important; }
 .deck-row.done .deck-fill { background: var(--green); width: 100% !important; }
 .deck-fill.indeterminate { width: 30%; animation: sweep 1.3s ease-in-out infinite; }
 @keyframes sweep {

@@ -182,13 +182,27 @@ def read_checkpoint(job: Job, stage: str, schema_version: int) -> dict | None:
     if not path.exists():
         return None
     try:
-        envelope = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+        raw = path.read_bytes()
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("cp1252")
+        envelope = json.loads(text)
+    except (UnicodeDecodeError, json.JSONDecodeError, OSError):
         return None
     if envelope.get("schema_version") != schema_version:
         return None
     data = envelope.get("data")
     return data if isinstance(data, dict) else None
+
+def invalidate_checkpoints(job: Job) -> None:
+    """Remove stage checkpoints so a job is rebuilt from its source."""
+    for path in job.dir.glob("*.json"):
+        if path.name in {"settings.json"}:
+            continue
+        path.unlink(missing_ok=True)
+    with _connect() as conn:
+        conn.execute("DELETE FROM stage_runs WHERE job_id = ?", (job.id,))
 
 
 def mark_stage(job_id: str, stage: str, status: str, schema_version: int, error: str | None = None) -> None:

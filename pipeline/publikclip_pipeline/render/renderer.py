@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from . import ffmpeg_bin
@@ -39,10 +41,10 @@ def videotoolbox_available() -> bool:
     if _vt_checked is None:
         proc = subprocess.run(
             [
-                ffmpeg_bin.ffmpeg(), "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:d=0.2",
+                ffmpeg_bin.ffmpeg(), "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:d=0.2",
                 "-c:v", "h264_videotoolbox", "-f", "null", "-",
             ],
-            capture_output=True, timeout=60,
+            capture_output=True, timeout=60, stdin=subprocess.DEVNULL,
         )
         _vt_checked = proc.returncode == 0
     return _vt_checked
@@ -56,13 +58,75 @@ def nvenc_available() -> bool:
     if _nvenc_checked is None:
         proc = subprocess.run(
             [
-                ffmpeg_bin.ffmpeg(), "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:d=0.2",
+                ffmpeg_bin.ffmpeg(), "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:d=0.2",
                 "-c:v", "h264_nvenc", "-f", "null", "-",
             ],
-            capture_output=True, timeout=60,
+            capture_output=True, timeout=60, stdin=subprocess.DEVNULL,
         )
         _nvenc_checked = proc.returncode == 0
     return _nvenc_checked
+
+
+_cuda_checked: bool | None = None
+
+def _cuda_decode_available() -> bool:
+    """Probe once: decode a short black clip with CUDA hwaccel."""
+    global _cuda_checked
+    if _cuda_checked is None:
+        proc = subprocess.run(
+            [
+                ffmpeg_bin.ffmpeg(), "-nostdin", "-v", "error",
+                "-hwaccel", "cuda", "-hwaccel_output_format", "nv12",
+                "-f", "lavfi", "-i", "color=black:s=320x240:d=0.2",
+                "-vf", "scale=160:120",
+                "-f", "null", "-",
+            ],
+            capture_output=True, timeout=60, stdin=subprocess.DEVNULL,
+        )
+        _cuda_checked = proc.returncode == 0
+    return _cuda_checked
+
+
+def _run_ffmpeg(
+    args: list[str], duration: float, timeout: float,
+    progress: Callable[[float], None] | None,
+) -> None:
+    proc = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        stdin=subprocess.DEVNULL,
+    )
+    stderr_lines: list[str] = []
+
+    def read_stdout() -> None:
+        if proc.stdout is None:
+            return
+        for line in proc.stdout:
+            key, _, value = line.partition("=")
+            if key == "out_time_ms" and progress:
+                try:
+                    progress(min(1.0, max(0.0, float(value) / 1_000_000 / duration)))
+                except ValueError:
+                    pass
+
+    def read_stderr() -> None:
+        if proc.stderr is not None:
+            stderr_lines.extend(proc.stderr)
+
+    stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+    stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+    stdout_thread.start()
+    stderr_thread.start()
+    try:
+        returncode = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise RuntimeError(f"Render timed out after {timeout:.0f}s.")
+    finally:
+        stdout_thread.join(timeout=5)
+        stderr_thread.join(timeout=5)
+    if returncode != 0:
+        raise RuntimeError(f"Render failed: {''.join(stderr_lines)[-800:]}")
 
 
 def crop_boxes(frames: list[list[float]], src_w: int, src_h: int) -> list[tuple[int, int, int, int]]:
@@ -128,6 +192,7 @@ def render_clip(
     src_w: int = 1920,
     src_h: int = 1080,
     timeout: float = 1800.0,
+    progress: Callable[[float], None] | None = None,
 ) -> None:
     duration = clip_end - clip_start
     boxes = crop_boxes(trajectory["frames"], src_w, src_h)
@@ -139,27 +204,49 @@ def render_clip(
     cmd_path.write_text("\n".join(sendcmd_lines(boxes, fps)) + "\n")
 
     w0, h0, x0, y0 = boxes[0]
-    vf_parts = [
-        f"sendcmd=f={_q(cmd_path)}",
-        f"crop@c=w={w0}:h={h0}:x={x0}:y={y0}",
-        f"scale={OUT_W}:{OUT_H}:flags=lanczos",
-        "setsar=1",
-    ]
-    if ass_path is not None:
-        sub = f"subtitles=filename={_q(ass_path)}"
-        if fonts_dir is not None:
-            sub += f":fontsdir={_q(fonts_dir)}"
-        vf_parts.append(sub)
 
-    if nvenc_available():
+    use_cuda = False
+
+    if use_cuda:
+        # GPU-accelerated path: CUDA decode → crop/scale on GPU → hwdownload
+        # for CPU subtitle burn → hwupload back for NVENC encode.
+        vf_parts = [
+            f"sendcmd=f={_q(cmd_path)}",
+            f"crop@c=w={w0}:h={h0}:x={x0}:y={y0}",
+            f"hwupload_cuda,scale_cuda={OUT_W}:{OUT_H},hwdownload,format=yuv420p",
+            "setsar=1",
+        ]
+        if ass_path is not None:
+            sub = f"subtitles=filename={_q(ass_path)}"
+            if fonts_dir is not None:
+                sub += f":fontsdir={_q(fonts_dir)}"
+            vf_parts.append(sub)
         vcodec = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", str(X264_CRF)]
-    elif videotoolbox_available():
-        vcodec = ["-c:v", "h264_videotoolbox", "-b:v", VT_BITRATE, "-allow_sw", "1"]
+        hwaccel_args = ["-hwaccel", "cuda", "-hwaccel_output_format", "nv12"]
     else:
-        vcodec = ["-c:v", "libx264", "-preset", "medium", "-crf", str(X264_CRF)]
+        vf_parts = [
+            f"sendcmd=f={_q(cmd_path)}",
+            f"crop@c=w={w0}:h={h0}:x={x0}:y={y0}",
+            f"hwupload_cuda,scale_cuda={OUT_W}:{OUT_H},hwdownload,format=yuv420p",
+            "setsar=1",
+        ]
+        if ass_path is not None:
+            sub = f"subtitles=filename={_q(ass_path)}"
+            if fonts_dir is not None:
+                sub += f":fontsdir={_q(fonts_dir)}"
+            vf_parts.append(sub)
+        hwaccel_args = []
+
+        if nvenc_available():
+            vcodec = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", str(X264_CRF)]
+        elif videotoolbox_available():
+            vcodec = ["-c:v", "h264_videotoolbox", "-b:v", VT_BITRATE, "-allow_sw", "1"]
+        else:
+            vcodec = ["-c:v", "libx264", "-preset", "medium", "-crf", str(X264_CRF)]
 
     args = [
-        ffmpeg_bin.ffmpeg(), "-y", "-v", "error",
+        ffmpeg_bin.ffmpeg(), "-nostdin", "-y", "-v", "error",
+        *hwaccel_args,
         "-ss", f"{clip_start:.3f}", "-t", f"{duration:.3f}",
         "-i", media_path,
         "-vf", ",".join(vf_parts),
@@ -169,12 +256,11 @@ def render_clip(
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart",
         "-map_metadata", "-1",  # metadata scrub (openshorts ffmpeg_utils)
+        "-progress", "pipe:1", "-nostats",
         str(out_path),
     ]
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    _run_ffmpeg(args, duration, timeout, progress)
     cmd_path.unlink(missing_ok=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"Render failed: {(proc.stderr or '')[-800:]}")
 
 
 def verify_output(out_path: Path, expected_duration: float) -> dict:

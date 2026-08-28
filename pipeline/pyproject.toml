@@ -39,3 +39,6 @@ packages = ["publikclip_pipeline"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: tests that exercise real media or external processing",
+]

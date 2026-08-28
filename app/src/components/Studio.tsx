@@ -184,7 +184,7 @@ interface Props {
 
 export default function Studio({ jobs, running, stages, error, initialSource, onRun, onOpenLoop, onOpenAnalytics, onOpenQueue, onOpenTranscribeQueue, onOpenJob, onResume, onDeleteJob }: Props) {
   const [source, setSource] = useState(initialSource || '')
-  const [llm, setLlm] = useState('gemini')
+  const [llm, setLlm] = useState('ollama')
   const [geminiModel, setGeminiModel] = useState('gemini-3.7-flash')
   const [captions, setCaptions] = useState('beast')
   const [asrModel, setAsrModel] = useState('large-v3-turbo')

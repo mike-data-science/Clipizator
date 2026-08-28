@@ -154,16 +154,6 @@ def _parse_vtt_time(ts: str) -> float:
     return float(parts[0])
 
 
-                     result.get("duration_sec"), campaign_id, video["video_url"]),
-                )
-            fetched += 1
-        except Exception as err:
-            errors.append({"video_url": video["video_url"], "error": str(err)})
-
-    emit(1.0, f"Fetched {fetched}/{len(pending)} transcripts")
-    return {"fetched": fetched, "total": len(videos), "errors": errors}
-
-
 def get_moment_text(
     video_url: str,
     start: float,

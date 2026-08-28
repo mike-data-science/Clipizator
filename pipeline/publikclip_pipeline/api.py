@@ -26,7 +26,7 @@ app = FastAPI(title="Publikclip API")
 @app.post("/api/jobs/upload")
 async def upload_and_run(
     video: UploadFile = File(...),
-    llm: str = "gemini",
+    llm: str = "ollama",
     gemini_model: str | None = None,
     captions: str = "classic",
     asr_model: str | None = None,
@@ -268,12 +268,12 @@ async def list_jobs():
         if has_ingest:
             try:
                 title = json.loads((d / "ingest.json").read_text())["data"]["title"]
-                    except Exception:
-                        pass
-                out.append({
-                    "id": id, "title": title,
-                    "ingested": has_ingest, "rendered": has_render,
-                })
+            except Exception:
+                pass
+        out.append({
+            "id": id, "title": title,
+            "ingested": has_ingest, "rendered": has_render,
+        })
     out.sort(key=lambda x: x["id"], reverse=True)
     return out
 

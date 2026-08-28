@@ -2,6 +2,14 @@ import { useEffect, useState } from 'react'
 import { api, listen } from '../api'
 import type { Campaign, CampaignFull, CampaignMoment } from '../types'
 
+function formatResolution(width?: number, height?: number): string {
+  if (!width || !height) return 'Not probed'
+  let label = `${height}p`
+  if (width >= 3840 || height >= 2160) label = '4K'
+  else if (width >= 2560 || height >= 1440) label = '2K'
+  return `${label} (${width} × ${height})`
+}
+
 export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSendToStudio?: (url: string) => void }) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -26,6 +34,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   })
   const [selectedClip, setSelectedClip] = useState<any>(null)
   const [selectedVideo, setSelectedVideo] = useState<any>(null)
+  const [refreshingVideoId, setRefreshingVideoId] = useState<number | null>(null)
   
   // Video filter state
   const [videoFilter, setVideoFilter] = useState<'all' | 'source' | 'mine' | 'competitor'>('all')
@@ -45,6 +54,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
   // Analyzer AI state
   const [videoRanking, setVideoRanking] = useState<any[]>([])
   const [hookRecs, setHookRecs] = useState<any>(null)
+  const [insights, setInsights] = useState<{ feedback?: { total: number; approvals: number; rejections: number; net: number } } | null>(null)
   const [selectedMatchVideo, setSelectedMatchVideo] = useState<any>(null)
   const [competitorMatches, setCompetitorMatches] = useState<any[]>([])
   const [improvingHookFor, setImprovingHookFor] = useState<number | null>(null)
@@ -137,6 +147,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
       // Fetch analyzer data
       api.getVideoRanking(id).then(setVideoRanking).catch(console.error)
       api.getHookRecommendations(id).then(setHookRecs).catch(console.error)
+      api.getCampaignInsights(id).then(setInsights).catch(console.error)
       
     } catch (err) {
       console.error('Failed to load campaign:', err)
@@ -157,6 +168,21 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
       console.error(err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function refreshCampaignVideo(video: any) {
+    if (!activeId || !video.id || !confirm('Re-download this source and rebuild all clips?')) return
+    setRefreshingVideoId(video.id)
+    try {
+      await api.refreshCampaignVideo(activeId, video.id)
+      alert('Source refresh and re-render started. Keep this campaign open to watch progress.')
+      setSelectedVideo(null)
+      loadCampaign(activeId)
+    } catch (err) {
+      alert('Could not refresh video: ' + err)
+    } finally {
+      setRefreshingVideoId(null)
     }
   }
 
@@ -586,6 +612,18 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
                       </div>
                       <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase' }}>Competitor Clips</div>
                     </div>
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                      <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--green)' }}>
+                        {insights?.feedback?.approvals ?? 0}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase' }}>Approved Reviews</div>
+                    </div>
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                      <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--red)' }}>
+                        {insights?.feedback?.rejections ?? 0}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--dim)', textTransform: 'uppercase' }}>Rejected Reviews</div>
+                    </div>
                   </div>
                 </section>
               </div>
@@ -607,6 +645,11 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
                           <div style={{ fontSize: '13px', color: 'var(--text)', marginBottom: '12px', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                             "{m.transcript_text}"
                           </div>
+                          {m.feedback_adjustment ? (
+                            <div style={{ fontSize: '11px', color: m.feedback_adjustment > 0 ? 'var(--green)' : 'var(--red)' }}>
+                              Feedback bias: {m.feedback_adjustment > 0 ? '+' : ''}{m.feedback_adjustment.toFixed(1)}
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -1082,7 +1125,20 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
                   {(selectedVideo.has_ingest && selectedVideo.has_asr) ? 'Ready for Studio' : 'Processing...'}
                 </div>
               </div>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Downloaded Resolution</div>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: selectedVideo.width && selectedVideo.height ? 'var(--green)' : 'var(--dim)' }}>
+                  {formatResolution(selectedVideo.width, selectedVideo.height)}
+                </div>
+              </div>
             </div>
+
+            {selectedVideo.media_url && (
+              <div style={{ marginBottom: '24px' }}>
+                <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '8px' }}>Downloaded Video Preview</div>
+                <video src={selectedVideo.media_url} controls playsInline style={{ width: '100%', maxHeight: '320px', background: '#000', borderRadius: '8px' }} />
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: '16px', marginTop: '32px', paddingTop: '16px', borderTop: '1px solid var(--glass-border)' }}>
               <a 
@@ -1118,6 +1174,15 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
                 Go to Studio ✂️
               </button>
             </div>
+            {selectedVideo.job_id && (
+              <button
+                onClick={() => refreshCampaignVideo(selectedVideo)}
+                disabled={refreshingVideoId === selectedVideo.id}
+                style={{ width: '100%', marginTop: '12px', padding: '12px 16px', background: 'rgba(255,178,36,0.14)', color: 'var(--amber)', border: '1px solid rgba(255,178,36,0.4)', borderRadius: '8px', cursor: refreshingVideoId === selectedVideo.id ? 'wait' : 'pointer', fontSize: '13px', fontWeight: 600, opacity: refreshingVideoId === selectedVideo.id ? 0.6 : 1 }}
+              >
+                {refreshingVideoId === selectedVideo.id ? 'REFRESHING SOURCE…' : 'RE-DOWNLOAD & RE-RENDER WITH BEST QUALITY'}
+              </button>
+            )}
           </div>
         </div>
       )}
