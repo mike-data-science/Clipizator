@@ -101,7 +101,7 @@ def main():
     auth_mode = args.cookies_from_browser or args.cookies or "cookies.txt fallback"
     print(f"Starting Laptop Worker. Polling {args.server_url} for new downloads...")
     print(f"yt-dlp authentication: {auth_mode}")
-    print("Download quality: best available video + audio, merged without transcoding")
+    print("Download quality: 720p+ when available, best audio, merged without transcoding")
     while True:
         jobs = get_jobs(args.server_url)
         if jobs:

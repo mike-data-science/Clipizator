@@ -206,8 +206,7 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
         args = [
             "-J", 
             "--no-playlist", 
-            "--no-warnings",
-            "--extractor-args", "youtube:player_client=android"
+            "--no-warnings"
         ]
         args.extend(_proxy_args())
         args.extend(_cookie_args())
@@ -257,7 +256,7 @@ def fetch_meta(url: str, progress: ProgressFn) -> UrlMeta:
     )
 
 
-DOWNLOAD_FORMAT = "bestvideo+bestaudio/best"
+DOWNLOAD_FORMAT = "bestvideo[height>=720]+bestaudio/best[height>=720]/bestvideo+bestaudio/best"
 
 _PCT_RE = re.compile(r"\[download\]\s+([\d.]+)%")
 
@@ -292,8 +291,7 @@ def download(url: str, out_path: Path, progress: ProgressFn) -> None:
         "--write-info-json",
         "--no-playlist",
         "--no-warnings",
-        "--newline",
-        "--extractor-args", "youtube:player_client=android"
+        "--newline"
     ]
     args.extend(_proxy_args())
     args.extend(_cookie_args())

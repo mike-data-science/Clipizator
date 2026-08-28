@@ -884,6 +884,9 @@ async def refresh_campaign_video(campaign_id: str, video_id: int):
     if not job:
         raise HTTPException(404, "pipeline job not found")
     queue.invalidate_checkpoints(job)
+    # Do not let a failed replacement download fall back to the previous media.
+    for old_media in job.dir.glob("media.*"):
+        old_media.unlink(missing_ok=True)
     with queue._connect() as conn:
         conn.execute(
             "UPDATE jobs SET source_type = 'url', source = ? WHERE id = ?",

@@ -1127,9 +1127,12 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
               </div>
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--dim)', textTransform: 'uppercase', marginBottom: '4px' }}>Downloaded Resolution</div>
-                <div style={{ fontSize: '18px', fontWeight: 600, color: selectedVideo.width && selectedVideo.height ? 'var(--green)' : 'var(--dim)' }}>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: selectedVideo.height && selectedVideo.height < 720 ? 'var(--amber)' : (selectedVideo.width && selectedVideo.height ? 'var(--green)' : 'var(--dim)') }}>
                   {formatResolution(selectedVideo.width, selectedVideo.height)}
                 </div>
+                {selectedVideo.height && selectedVideo.height < 720 && (
+                  <div style={{ marginTop: '4px', fontSize: '12px', color: 'var(--amber)' }}>Below HD. Re-download to try the best available source.</div>
+                )}
               </div>
             </div>
 
