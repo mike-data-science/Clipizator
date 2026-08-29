@@ -28,7 +28,7 @@ async def upload_and_run(
     video: UploadFile = File(...),
     llm: str = "ollama",
     gemini_model: str | None = None,
-    captions: str = "classic",
+    captions: str = "hormozi",
     asr_model: str | None = None,
 ):
     """Accept a video file upload, save to a temp location, and start a job."""

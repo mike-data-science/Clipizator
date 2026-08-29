@@ -7,8 +7,9 @@ any media."""
 import json
 
 import pytest
-
+import backend.server
 from publikclip_pipeline import config
+from publikclip_pipeline.campaigns import store
 from publikclip_pipeline.jobs import queue
 
 
@@ -144,3 +145,28 @@ def test_failure_then_resume_skips_completed_stages():
     assert counting.runs == 1  # not re-run
     assert results["failing"] == {"ok": True}
     assert queue.get_job(job.id).status == "done"
+
+
+def test_campaign_video_uses_transcript_title_when_available():
+    campaign = store.create_campaign("Demo")
+    video_url = "https://example.com/watch?v=test-video"
+
+    store.add_video(campaign["id"], video_url)
+    store.store_transcript(
+        video_url,
+        campaign["id"],
+        "Actual Video Title",
+        "Demo Channel",
+        123.0,
+        [{"text": "hello world", "start": 0.0, "end": 1.0}],
+        2,
+    )
+
+    rows = store.campaign_videos(campaign["id"])
+    assert rows[0]["title"] == "Actual Video Title"
+
+
+def test_job_title_uses_original_info_json_when_ingest_is_generic():
+    job = queue.create_job("url", "https://example.com/watch?v=abc123", _settings_json())
+    (job.dir / "media.info.json").write_text(json.dumps({"title": "Original Video Title"}))
+    assert backend.server._resolve_job_title(job) == "Original Video Title"

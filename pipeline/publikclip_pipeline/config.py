@@ -84,7 +84,7 @@ class Settings:
     gemini_model: str = "gemini-1.5-flash-8b"
     ollama_model: str = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
     ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-    caption_preset: str = "classic"
+    caption_preset: str = "hormozi"
     asr_model: str = "small"  # whisper model size
     # jrgillick laughter specialist: 10 ms precision but ~300k CPU forward
     # passes on an hour-plus source. OFF by default — PANNs' AudioSet
@@ -117,7 +117,7 @@ class Settings:
             gemini_model=data.get("gemini_model", "gemini-1.5-flash-8b"),
             ollama_model=data.get("ollama_model", os.environ.get("OLLAMA_MODEL", "qwen3:8b")),
             ollama_base_url=data.get("ollama_base_url", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")),
-            caption_preset=data.get("caption_preset", "classic"),
+            caption_preset=data.get("caption_preset", "hormozi"),
             asr_model=data.get("asr_model", "small"),
             laughter_specialist=data.get("laughter_specialist", False),
         )

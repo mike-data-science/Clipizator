@@ -45,79 +45,20 @@ const CAPTION_PRESET_DEFS: Record<string, {
   shadow: string
   stroke: string
   uppercase: boolean
-}> = {  beast: {
-    label: 'Viral Yellow',
-    fontFamily: "'Anton', 'Impact', sans-serif",
-    primaryColor: '#FFFFFF',
-    activeColor: '#FAFF00',
-    emphasisColor: '#FF2D55',
-    stroke: '2px #000',
-    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000',
-    uppercase: true,
-  },
+}> = {
   hormozi: {
-    label: 'Neon Lime',
-    fontFamily: "'Archivo Black', sans-serif",
+    label: 'Montserrat Black Italic',
+    fontFamily: "'Montserrat', 'Montserrat Black', 'Arial Black', sans-serif",
     primaryColor: '#FFFFFF',
-    activeColor: '#00FF66',
-    emphasisColor: '#FAFF00',
-    stroke: '2px #000',
-    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000',
-    uppercase: true,
-  },
-  'karaoke-pop': {
-    label: 'Cyan Glow',
-    fontFamily: "'Archivo Black', sans-serif",
-    primaryColor: '#FFFFFF',
-    activeColor: '#00E5FF',
-    emphasisColor: '#FF2DF1',
-    stroke: '2px #000',
-    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000, 0 0 10px rgba(0,229,255,0.6)',
-    uppercase: true,
-  },
-  'neon-glow': {
-    label: 'Cyber Pink',
-    fontFamily: "'Archivo Black', sans-serif",
-    primaryColor: '#FFFFFF',
-    activeColor: '#FF2DF1',
+    activeColor: '#FFE500',
     emphasisColor: '#00E5FF',
-    stroke: '2px #1A001A',
-    shadow: '2px 2px 0px #1a001a, -2px -2px 0px #1a001a, 2px -2px 0px #1a001a, -2px 2px 0px #1a001a, 0 0 12px rgba(255,45,241,0.7)',
+    stroke: '6px #000',
+    shadow: 'none',
     uppercase: true,
-  },
-  redbull: {
-    label: 'Flame Orange',
-    fontFamily: "'Anton', 'Impact', sans-serif",
-    primaryColor: '#FFFFFF',
-    activeColor: '#FF5500',
-    emphasisColor: '#FAFF00',
-    stroke: '2px #000',
-    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000',
-    uppercase: true,
-  },
-  classic: {
-    label: 'Clean White',
-    fontFamily: "'Inter', sans-serif",
-    primaryColor: '#FFFFFF',
-    activeColor: '#FAFF00',
-    emphasisColor: '#FAFF00',
-    stroke: '1.5px #000',
-    shadow: '1.5px 1.5px 0px #000, -1.5px -1.5px 0px #000, 1.5px -1.5px 0px #000, -1.5px 1.5px 0px #000',
-    uppercase: false,
-  },
-  minimal: {
-    label: 'Minimal Sky',
-    fontFamily: "'Inter', sans-serif",
-    primaryColor: '#FFFFFF',
-    activeColor: '#38BDF8',
-    emphasisColor: '#FAFF00',
-    stroke: '1px #000',
-    shadow: '1px 1px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000',
-    uppercase: false,
-  },
+  }
 }
 
-const PRESETS = ['beast', 'hormozi', 'karaoke-pop', 'neon-glow', 'redbull', 'classic', 'minimal']
+const PRESETS = ['hormozi']
 const CAMERAS = ['cut', 'pan', 'locked']
 const ANIMS = ['none', 'pop', 'ping']
 
@@ -507,8 +448,8 @@ export default function ClipEditor({ jobId, clipIndex, onClose, onRendered }: Pr
             if (!ctx?.words?.length) return null
             const v = videoRef.current
             const t = v ? v.currentTime : -1
-            const presetKey = edit.caption_preset ?? ctx.run_caption_preset ?? 'beast'
-            const style = CAPTION_PRESET_DEFS[presetKey] || CAPTION_PRESET_DEFS.beast
+            const presetKey = edit.caption_preset ?? ctx.run_caption_preset ?? 'hormozi'
+            const style = CAPTION_PRESET_DEFS[presetKey] || CAPTION_PRESET_DEFS.hormozi
 
             const wordIdx = ctx.words.findIndex((w) => t >= w.start && t < w.end)
             if (wordIdx === -1) return null
@@ -538,17 +479,23 @@ export default function ClipEditor({ jobId, clipIndex, onClose, onRendered }: Pr
               >
                 {chunkWords.map((w, idx) => {
                   const isActive = chunkStartIdx + idx === wordIdx
-                  const color = isActive ? style.activeColor : style.primaryColor
+                  const color = isActive ? '#FFE500' : (chunkStartIdx + idx) % 2 === 0 ? '#FFFFFF' : '#00E5FF'
                   return (
                     <span
                       key={idx}
                       style={{
                         color,
+                        WebkitTextFillColor: color,
+                        fontStyle: 'normal',
+                        fontWeight: 900,
+                        letterSpacing: '0.03em',
                         WebkitTextStroke: style.stroke,
                         textShadow: style.shadow,
-                        transform: isActive ? 'scale(1.12)' : 'scale(1)',
+                        transform: isActive ? 'scale(1.12) skewX(-10deg)' : 'skewX(-10deg)',
                         display: 'inline-block',
-                        transition: 'transform 0.08s ease'
+                        transition: 'transform 0.08s ease',
+                        paintOrder: 'stroke fill',
+                        marginBottom: '2px'
                       }}
                     >
                       {w.word}

@@ -9,7 +9,7 @@ import ClipEditor from './ClipEditor'
  * never a bare number.
  */
 
-const RESTYLE_PRESETS = ['beast', 'hormozi', 'karaoke-pop', 'neon-glow', 'redbull', 'classic', 'minimal']
+const RESTYLE_PRESETS = ['hormozi']
 const CAMERA_MODES: [string, string][] = [
   ['cut', 'hard cut on speaker change'],
   ['pan', 'eased pan between speakers'],
@@ -50,7 +50,7 @@ export default function Review({ results, onBack, onRestyle }: Props) {
   const [selected, setSelected] = useState(0)
   const [exported, setExported] = useState<Record<number, string>>({})
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, 'approved' | 'rejected' | 'neutral'>>({})
-  const currentPreset = results.render?.caption_preset ?? 'classic'
+  const currentPreset = results.render?.caption_preset ?? 'hormozi'
   const [restylePreset, setRestylePreset] = useState(currentPreset)
   const [restyleCamera, setRestyleCamera] = useState('cut')
   const [editing, setEditing] = useState<number | null>(null)
