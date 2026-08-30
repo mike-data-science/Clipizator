@@ -10,7 +10,29 @@ function formatResolution(width?: number, height?: number): string {
   return `${label} (${width} × ${height})`
 }
 
-export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSendToStudio?: (url: string) => void }) {
+function displayTitle(title: string | null | undefined, fallback: string) {
+  const raw = title?.trim()
+  if (raw) {
+    const lower = raw.toLowerCase()
+    const isGeneric = ['media', 'video', 'clip'].includes(lower) || /^https?:\/\//i.test(raw) || /(?:youtu\.be|youtube\.com|youtube-nocookie\.com)/i.test(raw)
+    if (!isGeneric) return raw
+  }
+
+  try {
+    const source = (title ?? '').trim()
+    if (source && /^https?:\/\//i.test(source)) {
+      const url = new URL(source)
+      const v = url.searchParams.get('v')
+      if (v) return `YouTube video ${v.slice(0, 8)}`
+      const name = decodeURIComponent(url.pathname).split('/').filter(Boolean).pop()?.replace(/\.[a-z0-9]+$/i, '')
+      if (name && !['watch', 'playlist'].includes(name.toLowerCase())) return name.replace(/[-_]+/g, ' ')
+    }
+  } catch {}
+
+  return fallback
+}
+
+export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSendToStudio?: (url: string, jobId?: string) => void }) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [campaign, setCampaign] = useState<CampaignFull | null>(null)
@@ -860,7 +882,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
                         )}
                       </div>
                       <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', flex: 1, background: 'rgba(0,0,0,0.3)' }}>
-                        <h3 style={{ fontSize: '14px', marginBottom: '8px', lineHeight: '1.4', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{v.title || v.video_url}</h3>
+                        <h3 style={{ fontSize: '14px', marginBottom: '8px', lineHeight: '1.4', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{displayTitle(v.title, 'Untitled video')}</h3>
                         <div style={{ fontSize: '12px', color: 'var(--dim)', marginBottom: '16px' }}>{v.channel || 'Unknown Channel'}</div>
                         <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: (v.has_ingest && v.has_asr) ? 'var(--green)' : 'var(--amber)' }}>
@@ -1036,7 +1058,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
             </div>
             
             <div style={{ fontSize: '14px', color: 'var(--dim)', marginBottom: '24px' }}>
-              Comparing against source: <strong style={{ color: 'var(--amber)' }}>{selectedMatchVideo.title || selectedMatchVideo.video_url}</strong>
+              Comparing against source: <strong style={{ color: 'var(--amber)' }}>{displayTitle(selectedMatchVideo.title, 'Untitled video')}</strong>
             </div>
 
             {loading ? (
@@ -1109,7 +1131,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
               <button onClick={() => setSelectedVideo(null)} style={{ background: 'none', border: 'none', color: 'var(--dim)', fontSize: '24px', cursor: 'pointer' }}>×</button>
             </div>
             
-            <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--text)', marginBottom: '8px' }}>{selectedVideo.title || selectedVideo.video_url}</h2>
+            <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--text)', marginBottom: '8px' }}>{displayTitle(selectedVideo.title, 'Untitled video')}</h2>
             <div style={{ fontSize: '14px', color: 'var(--dim)', marginBottom: '16px' }}>{selectedVideo.channel || 'Unknown Channel'}</div>
             
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '24px', background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '12px' }}>
@@ -1167,7 +1189,7 @@ export function Analytics({ onBack, onSendToStudio }: { onBack: () => void, onSe
               <button 
                 onClick={() => {
                   if (onSendToStudio && selectedVideo.has_ingest && selectedVideo.has_asr) {
-                    onSendToStudio(selectedVideo.video_url);
+                    onSendToStudio(selectedVideo.video_url, selectedVideo.job_id);
                     setSelectedVideo(null);
                   }
                 }}

@@ -30,7 +30,7 @@ from pathlib import Path
 
 FONTS_DIR = Path(__file__).parent / "fonts"
 
-CHUNK_MAX_WORDS = 4
+CHUNK_MAX_WORDS = 1
 CHUNK_PAUSE_BREAK = 0.6
 EMPHASIS_RMS_QUANTILE = 0.85
 
@@ -81,59 +81,59 @@ PRESETS: dict[str, Preset] = {
     for p in [
         Preset(
             name="classic",
-            font="Inter", font_file="Inter-Bold.ttf", size=72,
-            primary="&H00FFFFFF&", active="&H0000FFFA&", emphasis="&H0000FFFA&",
-            outline_color="&H00000000&", outline=5, shadow=2,
-            bold=True, uppercase=False, margin_v=560, pop=False,
-            event_tag_color="&H0000FFFA&",
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=84,
+            primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H0000E5FF&",
+            outline_color="&H00000000&", outline=8, shadow=0,
+            bold=False, uppercase=True, margin_v=560, pop=False,
+            event_tag_color="&H00FFE500&",
         ),
         Preset(
             name="beast",
-            font="Anton", font_file="Anton-Regular.ttf", size=92,
-            primary="&H00FFFFFF&", active="&H0000FFFA&", emphasis="&H00552DFF&",
-            outline_color="&H00000000&", outline=8, shadow=2,
-            bold=False, uppercase=True, margin_v=560, pop=True,
-            event_tag_color="&H0000FFFA&",
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=84,
+            primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H0000E5FF&",
+            outline_color="&H00000000&", outline=8, shadow=0,
+            bold=False, uppercase=True, margin_v=560, pop=False,
+            event_tag_color="&H00FFE500&",
         ),
         Preset(
             name="hormozi",
-            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=84,
-            primary="&H00FFFFFF&", active="&H0066FF00&", emphasis="&H0000FFFA&",
-            outline_color="&H00000000&", outline=7, shadow=1,
-            bold=False, uppercase=True, margin_v=560, pop=True,
-            event_tag_color="&H0066FF00&",
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=90,
+            primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H0000E5FF&",
+            outline_color="&H00000000&", outline=10, shadow=0,
+            bold=False, uppercase=True, margin_v=560, pop=False,
+            event_tag_color="&H00FFE500&",
         ),
         Preset(
             name="minimal",
-            font="Inter", font_file="Inter-Bold.ttf", size=62,
-            primary="&H00FFFFFF&", active="&H00F8BD38&", emphasis="&H0000FFFA&",
-            outline_color="&H00000000&", outline=3, shadow=1,
-            bold=True, uppercase=False, margin_v=500, pop=False,
-            event_tag_color="&H00F8BD38&",
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=84,
+            primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H0000E5FF&",
+            outline_color="&H00000000&", outline=8, shadow=0,
+            bold=False, uppercase=True, margin_v=560, pop=False,
+            event_tag_color="&H00FFE500&",
         ),
         Preset(
             name="karaoke-pop",
-            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=80,
-            primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H00F12DFF&",
-            outline_color="&H00000000&", outline=6, shadow=2,
-            bold=False, uppercase=True, margin_v=560, pop=True,
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=84,
+            primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H0000E5FF&",
+            outline_color="&H00000000&", outline=8, shadow=0,
+            bold=False, uppercase=True, margin_v=560, pop=False,
             event_tag_color="&H00FFE500&",
         ),
         Preset(
             name="neon-glow",
-            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=82,
-            primary="&H00FFFFFF&", active="&H00F12DFF&", emphasis="&H00FFE500&",
-            outline_color="&H001A001A&", outline=6, shadow=2,
-            bold=False, uppercase=True, margin_v=560, pop=True,
-            event_tag_color="&H00F12DFF&",
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=84,
+            primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H0000E5FF&",
+            outline_color="&H00000000&", outline=8, shadow=0,
+            bold=False, uppercase=True, margin_v=560, pop=False,
+            event_tag_color="&H00FFE500&",
         ),
         Preset(
             name="redbull",
-            font="Anton", font_file="Anton-Regular.ttf", size=92,
-            primary="&H00FFFFFF&", active="&H000055FF&", emphasis="&H0000FFFA&",
-            outline_color="&H00000000&", outline=8, shadow=2,
-            bold=False, uppercase=True, margin_v=560, pop=True,
-            event_tag_color="&H000055FF&",
+            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=84,
+            primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H0000E5FF&",
+            outline_color="&H00000000&", outline=8, shadow=0,
+            bold=False, uppercase=True, margin_v=560, pop=False,
+            event_tag_color="&H00FFE500&",
         ),
     ]
 }
@@ -237,12 +237,7 @@ def _chunk_text(chunk: Chunk, active_idx: int | None, preset: Preset, entrance: 
     parts: list[str] = []
     for i, word in enumerate(chunk.words):
         text = _esc(word.text.upper() if preset.uppercase else word.text)
-        if i == active_idx:
-            color = preset.active
-        elif word.emphasized:
-            color = preset.emphasis
-        else:
-            color = preset.primary
+        color = preset.active if i == active_idx else (preset.primary if i % 2 == 0 else preset.emphasis)
         color_tag = color if color.endswith("&") else f"{color}&"
         parts.append(f"{{\\c{color_tag}}}{text}")
     line = " ".join(parts)
@@ -254,12 +249,12 @@ def _chunk_text(chunk: Chunk, active_idx: int | None, preset: Preset, entrance: 
 def build_ass(
     words: list[Word],
     events: list[dict],
-    preset_name: str = "classic",
+    preset_name: str = "hormozi",
     emoji_ok: bool = False,
 ) -> str:
     """The full ASS document for one clip. `events` carry clip-relative
     start/end + type; only bus-detected non-speech events become tags."""
-    preset = PRESETS.get(preset_name, PRESETS["classic"])
+    preset = PRESETS.get(preset_name, PRESETS["hormozi"])
     lines = [_header(preset)]
 
     for chunk in chunk_words(words):

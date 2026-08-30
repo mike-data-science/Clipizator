@@ -86,9 +86,9 @@ def context_for_clip(job_dir: Path, clip_idx: int, pad: float = 45.0) -> dict:
         "rms_grid": grid,
         "events": clip_events,
         "auto_cuts": cuts,
-        "run_caption_preset": _load_stage(job_dir, "render").get("caption_preset", "classic")
+        "run_caption_preset": _load_stage(job_dir, "render").get("caption_preset", "hormozi")
         if (job_dir / "render.json").exists()
-        else "classic",
+        else "hormozi",
     }
 
 

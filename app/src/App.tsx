@@ -151,6 +151,24 @@ export default function App() {
     if (r.render?.outputs?.length) setView('review')
   }, [])
 
+  const handleGoToStudio = useCallback((url: string, jobId?: string) => {
+    if (jobId) {
+      openJob(jobId)
+      // openJob might set view to 'review' if it's fully rendered, otherwise we want 'studio'
+      api.jobResults(jobId).then((r) => {
+        if (!r.render?.outputs?.length) {
+          setView('studio')
+        }
+      })
+    } else {
+      setPrefilledSource(url)
+      setRunError(null)
+      setResults(null)
+      setActiveJob(null)
+      setView('studio')
+    }
+  }, [openJob])
+
   if (view === 'boot') {
     return (
       <div className="boot" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '20px', textAlign: 'center' }}>
@@ -185,28 +203,19 @@ export default function App() {
   if (view === 'analytics') {
     return <Analytics 
       onBack={() => setView('studio')} 
-      onSendToStudio={(url) => {
-        setPrefilledSource(url)
-        setView('studio')
-      }}
+      onSendToStudio={handleGoToStudio}
     />
   }
 
   if (view === 'queue') {
     return <Queue
-      onSendToStudio={(url) => {
-        setPrefilledSource(url)
-        setView('studio')
-      }}
+      onSendToStudio={handleGoToStudio}
     />
   }
 
   if (view === 'transcribe_queue') {
     return <TranscribeQueue
-      onSendToStudio={(url) => {
-        setPrefilledSource(url)
-        setView('studio')
-      }}
+      onSendToStudio={handleGoToStudio}
     />
   }
 
@@ -238,10 +247,22 @@ export default function App() {
       initialSource={prefilledSource}
       onRun={startRun}
       onUpload={startUpload}
-      onOpenLoop={() => setView('loop')}
-      onOpenAnalytics={() => setView('analytics')}
-      onOpenQueue={() => setView('queue')}
-      onOpenTranscribeQueue={() => setView('transcribe_queue')}
+      onOpenLoop={() => {
+        setPrefilledSource('')
+        setView('loop')
+      }}
+      onOpenAnalytics={() => {
+        setPrefilledSource('')
+        setView('analytics')
+      }}
+      onOpenQueue={() => {
+        setPrefilledSource('')
+        setView('queue')
+      }}
+      onOpenTranscribeQueue={() => {
+        setPrefilledSource('')
+        setView('transcribe_queue')
+      }}
       onOpenJob={openJob}
       onResume={(id, llm, geminiModel, asrModel) => {
         setRunning(true)

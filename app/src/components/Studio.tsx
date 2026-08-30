@@ -30,114 +30,24 @@ const CAPTION_PRESET_DEFS: Record<string, {
   dotColor: string
   badge: string
 }> = {
-  beast: {
-    id: 'beast',
-    label: 'Viral Yellow',
-    subtitle: 'CapCut Signature Yellow & Coral',
-    fontFamily: "'Anton', 'Impact', sans-serif",
-    fontSize: 32,
-    primaryColor: '#FFFFFF',
-    activeColor: '#FAFF00',
-    emphasisColor: '#FF2D55',
-    stroke: '3px #000',
-    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000, 0 4px 10px rgba(0,0,0,0.85)',
-    uppercase: true,
-    dotColor: '#FAFF00',
-    badge: 'CAPCUT'
-  },
   hormozi: {
     id: 'hormozi',
-    label: 'Neon Lime',
-    subtitle: 'CapCut Neon Green & Lemon',
-    fontFamily: "'Archivo Black', sans-serif",
-    fontSize: 27,
-    primaryColor: '#FFFFFF',
-    activeColor: '#00FF66',
-    emphasisColor: '#FAFF00',
-    stroke: '2.5px #000',
-    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000, 0 3px 8px rgba(0,0,0,0.8)',
-    uppercase: true,
-    dotColor: '#00FF66',
-    badge: 'VIRAL'
-  },
-  'karaoke-pop': {
-    id: 'karaoke-pop',
-    label: 'Cyan Glow',
-    subtitle: 'CapCut Electric Cyan & Pink',
-    fontFamily: "'Archivo Black', sans-serif",
-    fontSize: 26,
-    primaryColor: '#FFFFFF',
-    activeColor: '#00E5FF',
-    emphasisColor: '#FF2DF1',
-    stroke: '2.5px #000',
-    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000, 0 0 16px rgba(0,229,255,0.6)',
-    uppercase: true,
-    dotColor: '#00E5FF',
-    badge: 'POP'
-  },
-  'neon-glow': {
-    id: 'neon-glow',
-    label: 'Cyber Pink',
-    subtitle: 'CapCut Hot Pink & Cyan',
-    fontFamily: "'Archivo Black', sans-serif",
-    fontSize: 26,
-    primaryColor: '#FFFFFF',
-    activeColor: '#FF2DF1',
-    emphasisColor: '#00E5FF',
-    stroke: '2.5px #1A001A',
-    shadow: '2px 2px 0px #1a001a, -2px -2px 0px #1a001a, 2px -2px 0px #1a001a, -2px 2px 0px #1a001a, 0 0 18px rgba(255,45,241,0.7)',
-    uppercase: true,
-    dotColor: '#FF2DF1',
-    badge: 'CYBER'
-  },
-  redbull: {
-    id: 'redbull',
-    label: 'Flame Orange',
-    subtitle: 'CapCut Sunset Orange & Yellow',
-    fontFamily: "'Anton', 'Impact', sans-serif",
+    label: 'Montserrat Black Italic',
+    subtitle: 'Black stroke, white / yellow / cyan fills only',
+    fontFamily: "'Montserrat', 'Arial Black', 'Archivo Black', sans-serif",
     fontSize: 32,
     primaryColor: '#FFFFFF',
-    activeColor: '#FF5500',
-    emphasisColor: '#FAFF00',
-    stroke: '3px #000',
-    shadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000, 0 4px 10px rgba(0,0,0,0.85)',
+    activeColor: '#FFE500',
+    emphasisColor: '#00E5FF',
+    stroke: '8px #000',
+    shadow: 'none',
     uppercase: true,
-    dotColor: '#FF5500',
-    badge: 'ACTION'
-  },
-  classic: {
-    id: 'classic',
-    label: 'Clean White',
-    subtitle: 'CapCut Classic Subtitles',
-    fontFamily: "'Inter', sans-serif",
-    fontSize: 24,
-    primaryColor: '#FFFFFF',
-    activeColor: '#FAFF00',
-    emphasisColor: '#FAFF00',
-    stroke: '2px #000',
-    shadow: '1.5px 1.5px 0px #000, -1.5px -1.5px 0px #000, 1.5px -1.5px 0px #000, -1.5px 1.5px 0px #000',
-    uppercase: false,
-    dotColor: '#FAFF00',
-    badge: 'CLEAN'
-  },
-  minimal: {
-    id: 'minimal',
-    label: 'Minimal Sky',
-    subtitle: 'CapCut Sky Blue Accent',
-    fontFamily: "'Inter', sans-serif",
-    fontSize: 20,
-    primaryColor: '#FFFFFF',
-    activeColor: '#38BDF8',
-    emphasisColor: '#FAFF00',
-    stroke: '1.5px #000',
-    shadow: '1px 1px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000',
-    uppercase: false,
-    dotColor: '#38BDF8',
-    badge: 'MODERN'
+    dotColor: '#FFE500',
+    badge: 'BLACK OUTLINE'
   }
 }
 
-const CAPTION_PRESETS = Object.keys(CAPTION_PRESET_DEFS)
+const CAPTION_PRESETS = ['hormozi']
 
 const SAMPLE_PHRASES = [
   [
@@ -186,7 +96,7 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
   const [source, setSource] = useState(initialSource || '')
   const [llm, setLlm] = useState('ollama')
   const [geminiModel, setGeminiModel] = useState('gemini-3.7-flash')
-  const [captions, setCaptions] = useState('beast')
+  const [captions, setCaptions] = useState('hormozi')
   const [asrModel, setAsrModel] = useState('large-v3-turbo')
   const [showKey, setShowKey] = useState(false)
   const [showCaptionModal, setShowCaptionModal] = useState(false)
@@ -194,6 +104,7 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
   const [phraseIdx, setPhraseIdx] = useState(0)
   const [wordIdx, setWordIdx] = useState(0)
   const [isPlayingPreview, setIsPlayingPreview] = useState(true)
+  const [wordColor, setWordColor] = useState<'white' | 'yellow' | 'cyan'>('white')
 
   const GEMINI_MODELS = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-2.5-pro']
   const ASR_MODELS = ['large-v3-turbo', 'large-v3', 'large-v2', 'medium.en', 'small.en', 'base.en', 'tiny.en']
@@ -213,10 +124,17 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
     return () => clearInterval(timer)
   }, [isPlayingPreview, phraseIdx])
 
-  const curStyle = CAPTION_PRESET_DEFS[captions] || CAPTION_PRESET_DEFS.beast
+  const curStyle = CAPTION_PRESET_DEFS[captions] || CAPTION_PRESET_DEFS.hormozi
+  const wordColorMap = {
+    white: '#FFFFFF',
+    yellow: '#FFE500',
+    cyan: '#00E5FF',
+  } as const
 
   const renderCaptionPreview = () => {
     const currentPhrase = SAMPLE_PHRASES[phraseIdx]
+    const visibleWords = currentPhrase.slice(wordIdx, wordIdx + 1)
+    const lineColor = wordColorMap[wordColor]
 
     if (!showCaptionModal) return null;
 
@@ -232,6 +150,24 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
               </span>
             </div>
             <div className="caption-preview-controls">
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginRight: '8px' }}>
+                {(['white', 'yellow', 'cyan'] as const).map((colorKey) => (
+                  <button
+                    key={colorKey}
+                    className="opt"
+                    style={{
+                      padding: '3px 8px',
+                      fontSize: '10px',
+                      borderColor: wordColor === colorKey ? 'var(--amber)' : undefined,
+                      color: wordColor === colorKey ? 'var(--amber)' : undefined
+                    }}
+                    onClick={() => setWordColor(colorKey)}
+                    title={`Use ${colorKey} fill`}
+                  >
+                    {colorKey}
+                  </button>
+                ))}
+              </div>
               <button
                 className="opt"
                 style={{ padding: '3px 8px', fontSize: '10px' }}
@@ -270,31 +206,32 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
               letterSpacing: curStyle.uppercase ? '0.04em' : 'normal',
               fontWeight: 900,
               display: 'flex',
-              flexWrap: 'wrap',
               justifyContent: 'center',
               alignItems: 'center',
-              gap: '10px 12px'
+              minHeight: '80px',
+              lineHeight: 0.9,
+              transform: 'skewX(-8deg)'
             }}
           >
-            {currentPhrase.map((item, idx) => {
-              const isActive = idx === wordIdx
-              const color = isActive
-                ? curStyle.activeColor
-                : item.emp
-                ? curStyle.emphasisColor
-                : curStyle.primaryColor
-
+            {visibleWords.map((item, idx) => {
+              const isActive = idx === 0
               return (
                 <span
-                  key={idx}
+                  key={`${item.text}-${idx}`}
                   style={{
-                    color,
+                    color: lineColor,
+                    WebkitTextFillColor: lineColor,
+                    fontStyle: 'normal',
+                    fontWeight: 900,
+                    letterSpacing: '0.04em',
                     WebkitTextStroke: curStyle.stroke,
-                    textShadow: curStyle.shadow,
+                    textShadow: 'none',
                     display: 'inline-block',
-                    transform: isActive ? 'scale(1.14)' : 'scale(1)',
+                    transform: isActive ? 'scale(1.12) skewX(-10deg)' : 'skewX(-10deg)',
                     transition: 'transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.12s ease',
-                    filter: isActive ? 'drop-shadow(0 0 8px currentColor)' : 'none'
+                    filter: 'none',
+                    paintOrder: 'stroke fill',
+                    whiteSpace: 'nowrap'
                   }}
                 >
                   {item.text}
@@ -348,7 +285,25 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
                 title={job.rendered ? 'open results' : 'resume from checkpoint'}
               >
                 <span className={`led ${job.rendered ? 'led-on' : 'led-half'}`} />
-                <span className="rail-job-title">{job.title ?? job.id}</span>
+                <span className="rail-job-title">{
+                  (() => {
+                    const rawTitle = job.title?.trim();
+                    const generic = ['media', 'video', 'clip'];
+                    const isUrl = !!rawTitle && (/^https?:\/\//i.test(rawTitle) || /(?:youtu\.be|youtube\.com|youtube-nocookie\.com)/i.test(rawTitle));
+                    if (rawTitle && !generic.includes(rawTitle.toLowerCase()) && !isUrl) return rawTitle;
+                    const fallback = job.id;
+                    try {
+                      if (typeof (job as any).source === 'string' && /^https?:\/\//i.test((job as any).source)) {
+                        const url = new URL((job as any).source)
+                        const v = url.searchParams.get('v')
+                        if (v) return `YouTube video ${v.slice(0, 8)}`
+                        const name = decodeURIComponent(url.pathname).split('/').filter(Boolean).pop()?.replace(/\.[a-z0-9]+$/i, '')
+                        if (name && !['watch', 'playlist'].includes(name.toLowerCase())) return name.replace(/[-_]+/g, ' ')
+                      }
+                    } catch {}
+                    return fallback;
+                  })()
+                }</span>
                 <span className="rail-job-hint">{job.rendered ? 'open' : 'resume'}</span>
               </button>
               <button
@@ -390,20 +345,20 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
             <input
               value={source}
               onChange={(e) => setSource(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && source.trim() && !running && onRun(source.trim(), llm, geminiModel, captions, asrModel)}
+              onKeyDown={(e) => e.key === 'Enter' && (source || initialSource || '').trim() && !running && onRun((source || initialSource || '').trim(), llm, geminiModel, captions, asrModel)}
               placeholder="YouTube URL or a path to a video file"
               disabled={running}
             />
           </div>
-          {initialSource && (
+          {(initialSource || source) && (
             <div style={{ marginBottom: '24px', background: 'var(--panel)', padding: '16px 24px', borderRadius: '12px', border: '1px solid var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
                 <div style={{ fontSize: '13px', color: 'var(--dim)', marginBottom: '4px' }}>Ready to Process</div>
-                <div style={{ fontWeight: 600, color: 'var(--fg)' }}>{initialSource}</div>
+                <div style={{ fontWeight: 600, color: 'var(--fg)' }}>{source || initialSource}</div>
               </div>
               <button
                 className="btn-primary"
-                onClick={() => onRun(source.trim(), llm, geminiModel, captions, asrModel)}
+                onClick={() => onRun((source || initialSource || '').trim(), llm, geminiModel, captions, asrModel)}
                 disabled={running}
               >
                 {running ? 'WORKING' : 'CUT IT'}

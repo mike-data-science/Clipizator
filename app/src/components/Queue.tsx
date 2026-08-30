@@ -9,7 +9,29 @@ interface QueueItem {
   job_id?: string
 }
 
-export function Queue(_props: { onSendToStudio: (url: string) => void }) {
+function displayTitle(title: string | null | undefined, fallback: string) {
+  const raw = title?.trim()
+  if (raw) {
+    const lower = raw.toLowerCase()
+    const isGeneric = ['media', 'video', 'clip'].includes(lower) || /^https?:\/\//i.test(raw) || /(?:youtu\.be|youtube\.com|youtube-nocookie\.com)/i.test(raw)
+    if (!isGeneric) return raw
+  }
+
+  try {
+    const source = (title ?? '').trim()
+    if (source && /^https?:\/\//i.test(source)) {
+      const url = new URL(source)
+      const v = url.searchParams.get('v')
+      if (v) return `YouTube video ${v.slice(0, 8)}`
+      const name = decodeURIComponent(url.pathname).split('/').filter(Boolean).pop()?.replace(/\.[a-z0-9]+$/i, '')
+      if (name && !['watch', 'playlist'].includes(name.toLowerCase())) return name.replace(/[-_]+/g, ' ')
+    }
+  } catch {}
+
+  return fallback
+}
+
+export function Queue(_props: { onSendToStudio: (url: string, jobId?: string) => void }) {
   const [items, setItems] = useState<QueueItem[]>([])
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState<Record<string, string | boolean>>({})
@@ -190,7 +212,7 @@ export function Queue(_props: { onSendToStudio: (url: string) => void }) {
                   );
                 })()}
                 <div style={{ flex: 1, textAlign: 'left' }}>
-                  <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: 600, borderBottom: 'none', paddingBottom: 0 }}>{item.title || item.video_url}</h3>
+                  <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: 600, borderBottom: 'none', paddingBottom: 0 }}>{displayTitle(item.title, 'Untitled video')}</h3>
                   <div style={{ fontSize: '13px', color: 'var(--dim)', display: 'flex', gap: '16px' }}>
                     <span>Campaign: <strong style={{ color: 'var(--fg)' }}>{item.campaign_name}</strong></span>
                     <span>Status: <span style={{ color: isCompleted ? '#4caf50' : (isFailed ? '#f44336' : (isRunning ? 'var(--primary)' : 'var(--amber)')) }}>{isCompleted ? 'Downloaded' : (isFailed ? 'Failed' : (isRunning ? (stage?.message || 'Downloading...') : 'Pending'))}</span></span>

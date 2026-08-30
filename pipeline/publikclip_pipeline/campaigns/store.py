@@ -301,6 +301,7 @@ def get_campaign(campaign_id: str) -> dict | None:
             return None
         videos = conn.execute(
             "SELECT cv.*, "
+            " COALESCE(NULLIF(cv.title, ''), yt.title, cv.video_url) AS display_title,"
             " (CASE WHEN yt.video_url IS NOT NULL THEN 1 ELSE 0 END) AS has_transcript"
             " FROM campaign_videos cv"
             " LEFT JOIN yt_transcripts yt ON yt.video_url = cv.video_url"
@@ -311,13 +312,18 @@ def get_campaign(campaign_id: str) -> dict | None:
             "SELECT * FROM campaign_clips WHERE campaign_id = ? ORDER BY views DESC NULLS LAST",
             (campaign_id,),
         ).fetchall()
+    out = []
+    for v in videos:
+        data = dict(v)
+        data["title"] = data.pop("display_title")
+        out.append(data)
     return {
         "id": row["id"],
         "name": row["name"],
         "description": row["description"],
         "rules": row["rules_json"],
         "created_at": row["created_at"],
-        "videos": [dict(v) for v in videos],
+        "videos": out,
         "clips": [dict(c) for c in clips],
     }
 
@@ -410,6 +416,14 @@ def campaign_feedback(campaign_id: str) -> list[dict]:
 # ---- Videos -----------------------------------------------------------------
 
 
+def _generic_video_title(title: str | None) -> bool:
+    if not title:
+        return True
+    t = str(title).strip()
+    lowered = t.lower()
+    return lowered in {"media", "video", "clip", "https://", "http://", ""} or ("http://" in lowered or "https://" in lowered)
+
+
 def add_video(
     campaign_id: str,
     video_url: str,
@@ -421,20 +435,28 @@ def add_video(
     channel_subscribers: int | None = None,
 ) -> dict:
     now = time.time()
+    effective_title = title if title and not _generic_video_title(title) else None
     with _connect() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO campaign_videos"
+            "INSERT INTO campaign_videos"
             " (campaign_id, video_url, job_id, title, channel, duration_sec,"
             "  channel_subscribers, added_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (campaign_id, video_url, job_id, title, channel, duration_sec,
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(campaign_id, video_url) DO UPDATE SET"
+            "  job_id = COALESCE(excluded.job_id, campaign_videos.job_id),"
+            "  title = COALESCE(NULLIF(excluded.title, ''), campaign_videos.title),"
+            "  channel = COALESCE(NULLIF(excluded.channel, ''), campaign_videos.channel),"
+            "  duration_sec = COALESCE(excluded.duration_sec, campaign_videos.duration_sec),"
+            "  channel_subscribers = COALESCE(excluded.channel_subscribers, campaign_videos.channel_subscribers)"
+            ,
+            (campaign_id, video_url, job_id, effective_title, channel, duration_sec,
              channel_subscribers, now),
         )
     return {
         "campaign_id": campaign_id,
         "video_url": video_url,
         "job_id": job_id,
-        "title": title,
+        "title": effective_title,
         "channel": channel,
         "duration_sec": duration_sec,
         "added_at": now,
@@ -454,13 +476,19 @@ def campaign_videos(campaign_id: str) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT cv.*, "
+            " COALESCE(NULLIF(cv.title, ''), yt.title, cv.video_url) AS display_title,"
             " (CASE WHEN yt.video_url IS NOT NULL THEN 1 ELSE 0 END) AS has_transcript"
             " FROM campaign_videos cv"
             " LEFT JOIN yt_transcripts yt ON yt.video_url = cv.video_url"
             " WHERE cv.campaign_id = ? ORDER BY cv.added_at DESC",
             (campaign_id,),
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for row in rows:
+        data = dict(row)
+        data["title"] = data.pop("display_title")
+        out.append(data)
+    return out
 
 
 # ---- Clips ------------------------------------------------------------------
@@ -594,15 +622,24 @@ def store_transcript(
     transcript: list[dict],
     word_count: int,
 ) -> None:
+    clean_title = title if title and not _generic_video_title(title) else None
     with _connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO yt_transcripts"
             " (video_url, campaign_id, title, channel, duration_sec,"
             "  transcript_json, word_count, fetched_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (video_url, campaign_id, title, channel, duration_sec,
+            (video_url, campaign_id, clean_title, channel, duration_sec,
              json.dumps(transcript), word_count, time.time()),
         )
+        if campaign_id:
+            conn.execute(
+                "UPDATE campaign_videos SET title = COALESCE(NULLIF(?, ''), title),"
+                " channel = COALESCE(NULLIF(?, ''), channel),"
+                " duration_sec = COALESCE(?, duration_sec)"
+                " WHERE campaign_id = ? AND video_url = ?",
+                (clean_title, channel, duration_sec, campaign_id, video_url),
+            )
 
 
 def get_transcript(video_url: str) -> list[dict] | None:

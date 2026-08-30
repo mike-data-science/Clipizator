@@ -119,6 +119,66 @@ async def ws_endpoint(ws: WebSocket) -> None:
 
 
 # ---- helpers ---------------------------------------------------------------
+def _is_generic_title(value: str | None) -> bool:
+    if value is None:
+        return True
+    s = str(value).strip()
+    if not s:
+        return True
+    lowered = s.lower()
+    if lowered in {"media", "video", "clip"}:
+        return True
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        return True
+    return False
+
+
+def _title_from_info_json(job_dir: Path) -> str | None:
+    candidates: list[str] = []
+    for path in sorted(job_dir.glob("*.info.json")):
+        try:
+            payload = json.loads(path.read_text(errors="replace"))
+        except Exception:
+            continue
+        for key in ("title", "fulltitle", "id"):
+            val = payload.get(key)
+            if isinstance(val, str) and val.strip():
+                candidates.append(val.strip())
+        if not candidates:
+            for key in ("_type",):
+                val = payload.get(key)
+                if isinstance(val, str) and val.strip():
+                    candidates.append(val.strip())
+    for candidate in candidates:
+        if not _is_generic_title(candidate):
+            return candidate
+    return None
+
+
+def _resolve_job_title(job: queue.Job) -> str | None:
+    if job.title and not _is_generic_title(job.title):
+        return job.title
+    try:
+        title = _title_from_info_json(job.dir)
+        if title:
+            return title
+    except Exception:
+        pass
+    if job.source and job.source.startswith(("http://", "https://")):
+        try:
+            from publikclip_pipeline.ingest import ytdlp
+            meta = ytdlp.fetch_meta(job.source, lambda *_: None)
+            if meta.title and not _is_generic_title(meta.title):
+                return meta.title
+        except Exception:
+            pass
+    if job.source:
+        source_title = Path(job.source).stem
+        if source_title and not _is_generic_title(source_title):
+            return source_title
+    return None
+
+
 def _home() -> Path:
     return config.home_dir()
 
@@ -241,9 +301,10 @@ def check_ollama():
 @app.get("/api/jobs")
 def list_jobs():
     out = []
+    from publikclip_pipeline.campaigns import store
     with queue._connect() as conn:
         rows = conn.execute("SELECT id FROM jobs").fetchall()
-    
+
     for row in rows:
         job = queue.get_job(row["id"])
         if not job or not job.dir.exists():
@@ -252,13 +313,31 @@ def list_jobs():
         job_id = job.id
         has_render = (entry / "render.json").exists()
         has_ingest = (entry / "ingest.json").exists()
-        title = None
-        if has_ingest:
-            try:
-                d = json.loads((entry / "ingest.json").read_text(errors="replace"))
-                title = d.get("data", {}).get("title")
-            except Exception:
-                pass
+        title = _resolve_job_title(job)
+        if not title:
+            if has_ingest:
+                try:
+                    d = json.loads((entry / "ingest.json").read_text(errors="replace"))
+                    ingest_title = d.get("data", {}).get("title") or d.get("title")
+                    if ingest_title and not _is_generic_title(ingest_title):
+                        title = ingest_title
+                except Exception:
+                    pass
+        if _is_generic_title(title):
+            title = None
+        if not title:
+            campaign_video_title = None
+            for campaign in store.list_campaigns():
+                for video in store.campaign_videos(campaign["id"]):
+                    if video.get("job_id") == job.id and video.get("title") and not _is_generic_title(video.get("title")):
+                        campaign_video_title = video.get("title")
+                        break
+                if campaign_video_title:
+                    break
+            if campaign_video_title:
+                title = campaign_video_title
+        if _is_generic_title(title):
+            title = None
         out.append({
             "id": job_id,
             "title": title,
@@ -369,18 +448,12 @@ async def run_job(body: dict):
 
     job = queue.create_job(source_type, source, json.dumps(settings.to_json()))
     
-    # Studio pipeline skips ingest and asr stages because they are handled by the Queue
-    studio_stages = [s for s in _stages() if s.name not in ("ingest", "asr")]
-    threading.Thread(target=_run_pipeline_thread, args=(job, studio_stages), daemon=True).start()
+    # Run the full pipeline in Studio. Diarization requires both ingest + asr outputs.
+    threading.Thread(target=_run_pipeline_thread, args=(job, _stages()), daemon=True).start()
     
-    # Wait for the file to be ingested before returning the job ID
-    # (The shell used to do this synchronously too)
-    while True:
-        if (job.dir / "ingest.json").exists() or (job.dir / "asr.json").exists() or (job.dir / "diarize.json").exists():
-            break
-        import time
-        time.sleep(0.1)
-
+    # Return immediately; let WebSocket events notify the UI of progress.
+    # Do NOT block in a wait loop — if the pipeline thread crashes, this
+    # would hang forever and freeze the entire backend.
     return {"ok": True, "job_id": job.id}
 
 
@@ -532,7 +605,7 @@ async def upload_and_run(
     video: UploadFile = File(...),
     llm: str = "ollama",
     gemini_model: str | None = None,
-    captions: str = "classic",
+    captions: str = "hormozi",
     asr_model: str | None = None,
 ):
     """Accept a video file upload, save to a temp location, and start a job."""
