@@ -108,14 +108,14 @@ export default function App() {
   }, [refreshJobs])
 
   const startRun = useCallback(
-    async (source: string, llm: string, geminiModel: string, captions: string, asrModel: string) => {
+    async (source: string, llm: string, geminiModel: string, captions: string, asrModel: string, captionColor: string = 'white') => {
       setRunning(true)
       setRunError(null)
       setStages({})
       setResults(null)
       setActiveJob(null)
       try {
-        const res = await api.runJob(source, llm, geminiModel, captions, asrModel)
+        const res = await api.runJob(source, llm, geminiModel, captions, asrModel, captionColor)
         if (res && (res as any).job_id) {
           setActiveJob((res as any).job_id)
         }

@@ -251,10 +251,20 @@ def build_ass(
     events: list[dict],
     preset_name: str = "hormozi",
     emoji_ok: bool = False,
+    primary_color: str | None = None,
 ) -> str:
     """The full ASS document for one clip. `events` carry clip-relative
-    start/end + type; only bus-detected non-speech events become tags."""
-    preset = PRESETS.get(preset_name, PRESETS["hormozi"])
+    start/end + type; only bus-detected non-speech events become tags.
+    `primary_color` overrides the preset's idle-word colour: 'white', 'yellow', or 'cyan'."""
+    import copy
+    preset = copy.copy(PRESETS.get(preset_name, PRESETS["hormozi"]))
+    _COLOR_MAP = {
+        "white":  "&H00FFFFFF&",
+        "yellow": "&H00FFE500&",
+        "cyan":   "&H0000E5FF&",
+    }
+    if primary_color and primary_color in _COLOR_MAP:
+        preset.primary = _COLOR_MAP[primary_color]
     lines = [_header(preset)]
 
     for chunk in chunk_words(words):

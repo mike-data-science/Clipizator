@@ -23,7 +23,7 @@ from typing import Any
 T1_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "hook": {"type": "integer", "description": "0-10: do the first ~3 seconds grab attention on their own?"},
+        "hook": {"type": "integer", "description": "0-10: CRITICAL. Rate the intrigue of the FIRST 3 SECONDS ONLY. A 9-10 must start immediately with an interesting question, talk about money, or say something crazy/highly intriguing."},
         "hook_type": {
             "type": "string",
             "enum": ["question", "bold_claim", "story_open", "absurd", "conflict", "none"],
@@ -76,7 +76,10 @@ def t1_prompt(transcript_text: str, context: dict) -> str:
         f"{transcript_text}\n\n"
         f"Audio events detected in this span: {events_desc}\n\n"
         "Score each dimension honestly. Most clips are mediocre; 8+ on any "
-        "dimension should be rare. hook rates ONLY the first ~3 seconds. "
+        "dimension should be rare. "
+        "We are concentrating heavily on the 'hook' (the first 3 seconds). "
+        "To get a high hook score, it must start with an intriguing question, "
+        "talk about money/wealth, or say something crazy/absurd right away. "
         "shock is about content (surprising/taboo), independent of hook. "
         "punchline_index is the 0-based index (counting every word in order) "
         "of the word where the biggest laugh lands, or -1."
@@ -146,6 +149,18 @@ def cross_validate(
                 "rule": "shock_no_arousal",
                 "factor": shock_no_arousal,
                 "reason": "LLM rated this shocking but vocal arousal is flat and no replay elevation",
+            }
+        )
+
+    if not t1.get("self_contained", True):
+        penalty = 0.4
+        for k in sub:
+            sub[k] *= penalty
+        adjustments.append(
+            {
+                "rule": "not_self_contained",
+                "factor": penalty,
+                "reason": "clip requires outside context (starts mid-thought or as a response)",
             }
         )
 

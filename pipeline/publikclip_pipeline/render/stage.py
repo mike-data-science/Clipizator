@@ -16,6 +16,8 @@ class RenderStage(Stage):
     def artifacts_ok(self, ctx: StageContext, data: dict) -> bool:
         if data.get("caption_preset") != ctx.settings.caption_preset:
             return False  # restyle requested → re-render
+        if data.get("caption_color") != ctx.settings.caption_color:
+            return False  # color changed → re-render
         return all(Path(c["path"]).exists() for c in data.get("outputs", []))
 
     def run(self, ctx: StageContext) -> dict:
@@ -59,6 +61,7 @@ class RenderStage(Stage):
         out_dir = ctx.job_dir / "clips"
         out_dir.mkdir(exist_ok=True)
         preset = ctx.settings.caption_preset
+        caption_color = ctx.settings.caption_color
         outputs = []
         clips = score["clips"]
         for i, clip in enumerate(clips):
@@ -93,7 +96,7 @@ class RenderStage(Stage):
             ]
             ass_path = out_dir / f"clip_{i:02d}.ass"
             ass_path.write_text(
-                ass_mod.build_ass(words, clip_events, preset_name=preset, emoji_ok=emoji_ok)
+                ass_mod.build_ass(words, clip_events, preset_name=preset, emoji_ok=emoji_ok, primary_color=caption_color)
             )
 
             out_path = out_dir / f"clip_{i:02d}.mp4"
@@ -137,4 +140,5 @@ class RenderStage(Stage):
             "emoji_ok": emoji_ok,
             "captions_burned": captions_ok,
             "caption_preset": preset,
+            "caption_color": caption_color,
         }

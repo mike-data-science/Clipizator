@@ -27,8 +27,8 @@ from pathlib import Path
 
 from . import ffmpeg_bin
 
-OUT_W = 1080
-OUT_H = 1920
+OUT_W = 2160
+OUT_H = 3840
 X264_CRF = 19
 VT_BITRATE = "10M"
 
@@ -227,7 +227,7 @@ def render_clip(
         vf_parts = [
             f"sendcmd=f={_q(cmd_path)}",
             f"crop@c=w={w0}:h={h0}:x={x0}:y={y0}",
-            f"hwupload_cuda,scale_cuda={OUT_W}:{OUT_H},hwdownload,format=yuv420p",
+            f"scale={OUT_W}:{OUT_H},format=yuv420p",
             "setsar=1",
         ]
         if ass_path is not None:

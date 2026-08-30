@@ -81,7 +81,7 @@ interface Props {
   stages: Record<string, { fraction: number; message: string }>
   error: string | null
   initialSource?: string
-  onRun: (source: string, llm: string, geminiModel: string, captions: string, asrModel: string) => void
+  onRun: (source: string, llm: string, geminiModel: string, captions: string, asrModel: string, captionColor: string) => void
   onOpenLoop: () => void
   onOpenAnalytics: () => void
   onOpenQueue: () => void
@@ -345,7 +345,7 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
             <input
               value={source}
               onChange={(e) => setSource(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (source || initialSource || '').trim() && !running && onRun((source || initialSource || '').trim(), llm, geminiModel, captions, asrModel)}
+              onKeyDown={(e) => e.key === 'Enter' && (source || initialSource || '').trim() && !running && onRun((source || initialSource || '').trim(), llm, geminiModel, captions, asrModel, wordColor)}
               placeholder="YouTube URL or a path to a video file"
               disabled={running}
             />
@@ -358,7 +358,7 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
               </div>
               <button
                 className="btn-primary"
-                onClick={() => onRun((source || initialSource || '').trim(), llm, geminiModel, captions, asrModel)}
+                onClick={() => onRun((source || initialSource || '').trim(), llm, geminiModel, captions, asrModel, wordColor)}
                 disabled={running}
               >
                 {running ? 'WORKING' : 'CUT IT'}

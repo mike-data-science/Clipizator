@@ -431,6 +431,7 @@ async def run_job(body: dict):
     llm = body.get("llm")
     gemini_model = body.get("gemini_model")
     captions = body.get("captions")
+    caption_color = body.get("caption_color")
     asr_model = body.get("asr_model")
     if not source:
         raise HTTPException(400, "source is required")
@@ -443,6 +444,8 @@ async def run_job(body: dict):
         settings.gemini_model = gemini_model
     if captions:
         settings.caption_preset = captions
+    if caption_color:
+        settings.caption_color = caption_color
     if asr_model:
         settings.asr_model = asr_model
 
