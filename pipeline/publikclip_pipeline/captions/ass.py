@@ -97,7 +97,7 @@ PRESETS: dict[str, Preset] = {
         ),
         Preset(
             name="hormozi",
-            font="Archivo Black", font_file="ArchivoBlack-Regular.ttf", size=90,
+            font="Montserrat", font_file="Montserrat-Black.ttf", size=90,
             primary="&H00FFFFFF&", active="&H00FFE500&", emphasis="&H0000E5FF&",
             outline_color="&H00000000&", outline=10, shadow=0,
             bold=False, uppercase=True, margin_v=560, pop=False,
