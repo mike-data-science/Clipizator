@@ -64,9 +64,9 @@ def _nms(boxes: list[FaceBox]) -> list[FaceBox]:
 
 class FaceDetector:
     def __init__(self, model_path: str):
-        import onnxruntime as ort
+        from ..models.onnx import session
 
-        self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        self.session = session(model_path)
 
     def detect(self, rgb: np.ndarray, confidence: float = DEFAULT_CONFIDENCE) -> list[FaceBox]:
         """rgb: (MODEL_H, MODEL_W, 3) uint8. Returns normalized (0..1) boxes."""

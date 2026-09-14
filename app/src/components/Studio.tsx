@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { JobSummary } from '../types'
 import KeyModal from './KeyModal'
+import RedesignedStudio from './RedesignedStudio'
 
 const STAGE_ORDER = [
   'diarize', 'events', 'candidates', 'score', 'camera', 'render'
@@ -77,6 +78,8 @@ const SAMPLE_PHRASES = [
 
 interface Props {
   jobs: JobSummary[]
+  jobsLoading: boolean
+  jobsError: string | null
   running: boolean
   stages: Record<string, { fraction: number; message: string }>
   error: string | null
@@ -92,7 +95,7 @@ interface Props {
   onUpload: (file: File, llm: string, geminiModel: string, captions: string, asrModel: string) => void
 }
 
-export default function Studio({ jobs, running, stages, error, initialSource, onRun, onOpenLoop, onOpenAnalytics, onOpenQueue, onOpenTranscribeQueue, onOpenJob, onResume, onDeleteJob }: Props) {
+export default function Studio({ jobs, jobsLoading, jobsError, running, stages, error, initialSource, onRun, onUpload, onOpenLoop, onOpenAnalytics, onOpenQueue, onOpenTranscribeQueue, onOpenJob, onResume, onDeleteJob }: Props) {
   const [source, setSource] = useState(initialSource || '')
   const [llm, setLlm] = useState('ollama')
   const [geminiModel, setGeminiModel] = useState('gemini-3.7-flash')
@@ -130,6 +133,8 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
     yellow: '#FFE500',
     cyan: '#00E5FF',
   } as const
+
+  return <RedesignedStudio jobs={jobs} running={running} initialSource={initialSource} onRun={onRun} onUpload={onUpload} onOpenJob={onOpenJob} onOpenLoop={onOpenLoop} onOpenQueue={onOpenQueue} onOpenTranscribeQueue={onOpenTranscribeQueue} />
 
   const renderCaptionPreview = () => {
     const currentPhrase = SAMPLE_PHRASES[phraseIdx]
@@ -274,7 +279,8 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
         </header>
         <div className="rail-jobs">
           <p className="rail-label">SESSIONS</p>
-          {jobs.length === 0 && <p className="rail-empty">nothing yet</p>}
+          {jobs.length === 0 && <p className="rail-empty">{jobsLoading ? 'Loading sessions…' : jobsError || 'No clipped videos yet'}</p>}
+          {jobs.length > 0 && jobsError && <p className="rail-empty">{jobsError}</p>}
           {jobs.map((job) => (
             <div key={job.id} style={{ display: 'flex', alignItems: 'center' }}>
               <button
@@ -289,7 +295,7 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
                   (() => {
                     const rawTitle = job.title?.trim();
                     const generic = ['media', 'video', 'clip'];
-                    const isUrl = !!rawTitle && (/^https?:\/\//i.test(rawTitle) || /(?:youtu\.be|youtube\.com|youtube-nocookie\.com)/i.test(rawTitle));
+                    const isUrl = !!rawTitle && (/^https?:\/\//i.test(rawTitle) || /(?:youtu\.be|youtube\.com|youtube-nocookie\.com|watch\?|[?&]v=)/i.test(rawTitle));
                     if (rawTitle && !generic.includes(rawTitle.toLowerCase()) && !isUrl) return rawTitle;
                     const fallback = job.id;
                     try {
@@ -304,7 +310,7 @@ export default function Studio({ jobs, running, stages, error, initialSource, on
                     return fallback;
                   })()
                 }</span>
-                <span className="rail-job-hint">{job.rendered ? 'open' : 'resume'}</span>
+                <span className="rail-job-hint">{job.clip_count} {job.clip_count === 1 ? 'clip' : 'clips'}</span>
               </button>
               <button
                 style={{ background: 'none', border: 'none', color: 'var(--dim)', cursor: 'pointer', padding: '10px 15px', fontSize: '18px', lineHeight: 1 }}

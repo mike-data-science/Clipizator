@@ -83,6 +83,65 @@ bar, and a caption-capable static ffmpeg is fetched automatically.
 
 ## Development
 
+### Linux / SSH with NVIDIA GPU
+
+From the project directory, install the optional camera inference runtime after
+the base dependencies (the tested environment uses PyTorch 2.8 / CUDA 12.8):
+
+```sh
+venv/bin/python -m pip install -r requirements-gpu.txt
+```
+
+The runtime is pinned for the project's CUDA 12 libraries; newer ONNX GPU
+packages require CUDA 13. See the
+[ONNX CUDA compatibility table](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements).
+
+Start these in separate SSH terminals:
+
+```sh
+cd ~/Desktop/Clipizator/backend
+../venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8000
+```
+
+```sh
+cd ~/Desktop/Clipizator/app
+npm run dev -- --host 127.0.0.1
+```
+
+Tunnel port 5173 and open `http://localhost:5173` on Windows. Vite proxies API
+requests to the backend. Restart the backend after changing pipeline code.
+
+Rendering probes CUDA scaling and NVENC before using them, including for edited
+clips. CUDA scaling avoids the FFmpeg 6.1 software-scaler freeze observed when a
+camera punch-in changes the crop dimensions. A watchdog aborts FFmpeg after 120
+seconds without advancing frames or output time, even if it keeps emitting
+unchanged progress messages. Resume preserves completed analysis checkpoints.
+
+Face detection and active-speaker analysis prefer the ONNX CUDA provider;
+speech transcription, alignment, diarization, and audio models already select
+CUDA when available. The progress messages show the selected render/camera
+acceleration. Caption burning, crop commands, audio filters, and I/O still use
+the CPU. NVIDIA's encoder is separate from its general compute cores, so a
+fully busy encoder does not imply 100% general GPU utilization. To inspect both:
+
+```sh
+nvidia-smi --query-gpu=utilization.gpu,utilization.encoder,memory.used --format=csv -l 1
+```
+
+Review defaults to a cached 720×1280 H.264 playback preview at approximately
+1.6 Mbps video plus 96 kbps audio. The original 4K clip is still used for exports;
+choose **Original · full quality** in the player to inspect it. Preview generation
+uses NVIDIA decoding, scaling, and encoding where supported, with CPU decoding
+fallback. A new preview is prepared on first use, then reused. Re-rendering a clip
+automatically gives it a new preview cache key. Browser playback supports byte
+ranges, fast-start MP4s, and private caching without downloading the full export
+into a JavaScript blob. Preview files live in each clips directory's `.previews`.
+
+For the Windows tunnel `ssh -N -L 1080:localhost:5173 -L 8001:localhost:8000 Mike@4.231.114.220`,
+open `http://localhost:1080`. Alternatively, after running `npm run build` in `app`,
+open `http://localhost:8001` to use the built frontend served directly by the
+Linux backend. The latter does not require the Vite dev server.
+
 ```sh
 # pipeline
 cd pipeline && uv sync && uv run pytest

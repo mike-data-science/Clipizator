@@ -50,6 +50,8 @@ class CameraStage(Stage):
         be = registry.ensure(specs.LR_ASD_BACKEND, lambda f, m: ctx.emit(-1, m))
         detector = FaceDetector(str(uf))
         model = asd_mod.AsdModel(str(fe), str(be))
+        device = "CUDA GPU" if "CUDAExecutionProvider" in model.frontend.get_providers() else "CPU"
+        ctx.emit(-1, f"Camera analysis: {device}")
 
         curves = json.loads(Path(events["curves_path"]).read_text())
         dynamics = np.asarray(curves["dynamics"], dtype=float)

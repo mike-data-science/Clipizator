@@ -81,6 +81,10 @@ export interface JobSummary {
   title: string | null
   ingested: boolean
   rendered: boolean
+  clip_count: number
+  duration_sec?: number | null
+  thumbnail_url?: string | null
+  source?: string
 }
 
 export interface SetupState {
@@ -362,4 +366,3 @@ export interface CampaignFull extends Campaign {
   clips: CampaignClip[]
   moments: CampaignMoment[]
 }
-

@@ -115,6 +115,8 @@ export const api = {
     post<void>(`/jobs/${jobId}/resume`, { llm, gemini_model, captions, camera, asr_model }),
   jobResults: (jobId: string) => get<JobResults>(`/jobs/${jobId}/results`),
   listJobs: () => get<JobSummary[]>('/jobs'),
+  previewUrl: (jobId: string, clipIndex: number, revision = 0) =>
+    `${API}/jobs/${encodeURIComponent(jobId)}/clips/${clipIndex}/preview?v=${revision}`,
   saveGeminiKey: (key: string) => post<boolean>('/settings/gemini-key', { key }),
   savePexelsKey: (key: string) => post<boolean>('/settings/pexels-key', { key }),
   setupState: () => get<SetupState>('/setup'),

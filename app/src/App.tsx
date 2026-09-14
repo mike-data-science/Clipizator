@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, listen } from './api'
-import type { JobResults, JobSummary, PipelineEvent, SetupState } from './types'
+import type { JobResults, PipelineEvent, SetupState } from './types'
+import { useStudioJobs } from './useStudioJobs'
 import Onboarding from './components/Onboarding'
 import Studio from './components/Studio'
 import Review from './components/Review'
@@ -8,16 +9,18 @@ import Loop from './components/Loop'
 import { Analytics } from './components/Analytics'
 import { Queue } from './components/Queue'
 import { TranscribeQueue } from './components/TranscribeQueue'
+import ProjectClips from './components/ProjectClips'
 import './styles.css'
 
-type View = 'boot' | 'onboarding' | 'studio' | 'review' | 'loop' | 'analytics' | 'queue' | 'transcribe_queue'
+type View = 'boot' | 'onboarding' | 'studio' | 'project' | 'review' | 'loop' | 'analytics' | 'queue' | 'transcribe_queue'
 
 export default function App() {
   const [view, setView] = useState<View>('boot')
   const [setup, setSetup] = useState<SetupState | null>(null)
-  const [jobs, setJobs] = useState<JobSummary[]>([])
+  const { jobs, jobsLoading, jobsError, refreshJobs } = useStudioJobs()
   const [activeJob, setActiveJob] = useState<string | null>(null)
   const [results, setResults] = useState<JobResults | null>(null)
+  const [selectedClip, setSelectedClip] = useState(0)
   const [stages, setStages] = useState<Record<string, { fraction: number; message: string }>>({})
   const [running, setRunning] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
@@ -27,15 +30,15 @@ export default function App() {
   const activeJobRef = useRef<string | null>(null)
   activeJobRef.current = activeJob
 
-  const refreshJobs = useCallback(() => {
-    api.listJobs().then(setJobs).catch(() => setJobs([]))
-  }, [])
+  useEffect(() => {
+    if (view === 'studio') void refreshJobs()
+  }, [view, refreshJobs])
 
   useEffect(() => {
     api.setupState()
       .then((s) => {
         setSetup(s)
-        setView(s.onboarded ? 'analytics' : 'onboarding')
+        setView(s.onboarded ? 'studio' : 'onboarding')
       })
       .catch((err) => {
         console.error('Failed to connect to backend:', err)
@@ -148,7 +151,7 @@ export default function App() {
     const r = await api.jobResults(jobId)
     setActiveJob(jobId)
     setResults(r)
-    if (r.render?.outputs?.length) setView('review')
+    if (r.render?.outputs?.length) { setSelectedClip(0); setView('project') }
   }, [])
 
   const handleGoToStudio = useCallback((url: string, jobId?: string) => {
@@ -190,7 +193,7 @@ export default function App() {
         onDone={() => {
           api.markOnboarded()
           setSetup({ ...setup, onboarded: true })
-          setView('analytics')
+          setView('studio')
         }}
       />
     )
@@ -219,10 +222,15 @@ export default function App() {
     />
   }
 
+  if (view === 'project' && results) {
+    return <ProjectClips results={results} onBack={() => setView('studio')} onOpenClip={(index) => { setSelectedClip(index); setView('review') }} onOpenAnalytics={() => setView('analytics')} onOpenLoop={() => setView('loop')} onOpenQueue={() => setView('queue')} onOpenTranscribeQueue={() => setView('transcribe_queue')} />
+  }
+
   if (view === 'review' && results) {
     return (
       <Review
         results={results}
+        initialClip={selectedClip}
         onBack={() => {
           setView('studio')
           refreshJobs()
@@ -241,6 +249,8 @@ export default function App() {
   return (
     <Studio
       jobs={jobs}
+      jobsLoading={jobsLoading}
+      jobsError={jobsError}
       running={running}
       stages={stages}
       error={runError}

@@ -271,12 +271,20 @@ def render_clip_edit(job_dir: Path, clip_idx: int, emit) -> dict:
 
     cmd_path = out_dir / f"clip_{clip_idx:02d}.cmd"
     cmd_path.write_text("\n".join(renderer.sendcmd_lines(boxes, fps)) + "\n")
-    vchain = (
-        f"[vc]sendcmd=f={renderer._q(cmd_path)},"  # noqa: SLF001
-        f"crop@c=w={boxes[0][0]}:h={boxes[0][1]}:x={boxes[0][2]}:y={boxes[0][3]},"
-        f"hwupload_cuda,scale_cuda={renderer.OUT_W}:{renderer.OUT_H},"
-        f"hwdownload,format=yuv420p,setsar=1[vb]"
-    )
+    use_cuda = renderer.cuda_scale_available()
+    if use_cuda:
+        vchain = (
+            f"[vc]sendcmd=f={renderer._q(cmd_path)},"  # noqa: SLF001
+            f"crop@c=w={boxes[0][0]}:h={boxes[0][1]}:x={boxes[0][2]}:y={boxes[0][3]},"
+            f"{renderer.scale_filter()},setsar=1[vb]"
+        )
+    else:
+        vchain = (
+            f"[vc]sendcmd=f={renderer._q(cmd_path)},"  # noqa: SLF001
+            f"crop@c=w={boxes[0][0]}:h={boxes[0][1]}:x={boxes[0][2]}:y={boxes[0][3]},"
+            f"scale={renderer.OUT_W}:{renderer.OUT_H},"
+            f"format=yuv420p,setsar=1[vb]"
+        )
     graph.append(vchain)
 
     ov_inputs, ov_chains, vlabel = _overlay_filters(edit.overlays, 1, renderer.OUT_W, renderer.OUT_H)
@@ -311,7 +319,7 @@ def render_clip_edit(job_dir: Path, clip_idx: int, emit) -> dict:
     ]
     renderer._run_ffmpeg(  # noqa: SLF001
         args, remap.output_duration, 1800,
-        lambda fraction: emit(fraction),
+        lambda fraction: emit(fraction, "Rendering clip..."),
     )
     cmd_path.unlink(missing_ok=True)
 

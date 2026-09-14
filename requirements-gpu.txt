@@ -1,0 +1,3 @@
+# Install after the base requirements for NVIDIA systems using PyTorch CUDA 12.
+# ONNX Runtime >=1.27 wheels target CUDA 13 instead.
+onnxruntime-gpu==1.22.0

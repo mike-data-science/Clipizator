@@ -176,8 +176,10 @@ class AsdModel:
 
         opts = ort.SessionOptions()
         opts.log_severity_level = 3
-        self.frontend = ort.InferenceSession(frontend_path, opts, providers=["CPUExecutionProvider"])
-        self.backend = ort.InferenceSession(backend_path, opts, providers=["CPUExecutionProvider"])
+        from ..models.onnx import session
+
+        self.frontend = session(frontend_path, opts)
+        self.backend = session(backend_path, opts)
 
     def score_track(self, crops: list[np.ndarray], mfcc: np.ndarray | None, track_start: int) -> list[float]:
         frames = len(crops)

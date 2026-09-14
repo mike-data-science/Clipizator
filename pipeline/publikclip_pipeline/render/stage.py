@@ -64,6 +64,9 @@ class RenderStage(Stage):
         caption_color = ctx.settings.caption_color
         outputs = []
         clips = score["clips"]
+        scaling = "CUDA" if renderer.cuda_scale_available() else "CPU"
+        encoding = "NVENC" if renderer.nvenc_available() else "VideoToolbox" if renderer.videotoolbox_available() else "CPU"
+        ctx.emit(-1, f"Render acceleration: {scaling} scaling, {encoding} encoding")
         for i, clip in enumerate(clips):
             traj_path = camera["trajectories"].get(str(i))
             if not traj_path or not Path(traj_path).exists():

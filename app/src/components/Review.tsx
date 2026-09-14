@@ -20,6 +20,7 @@ interface Props {
   results: JobResults
   onBack: () => void
   onRestyle: (captions: string, camera: string) => void
+  initialClip?: number
 }
 
 const RULE_LABELS: Record<string, string> = {
@@ -44,10 +45,10 @@ function fmtTime(t: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-export default function Review({ results, onBack, onRestyle }: Props) {
+export default function Review({ results, onBack, onRestyle, initialClip = 0 }: Props) {
   const outputs = results.render?.outputs ?? []
   const clips = results.score?.clips ?? []
-  const [selected, setSelected] = useState(0)
+  const [selected, setSelected] = useState(initialClip)
   const [exported, setExported] = useState<Record<number, string>>({})
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, 'approved' | 'rejected' | 'neutral'>>({})
   const currentPreset = results.render?.caption_preset ?? 'hormozi'
@@ -55,6 +56,8 @@ export default function Review({ results, onBack, onRestyle }: Props) {
   const [restyleCamera, setRestyleCamera] = useState('cut')
   const [editing, setEditing] = useState<number | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [originalQuality, setOriginalQuality] = useState(false)
+  const [previewFailed, setPreviewFailed] = useState<string | null>(null)
   const styleChanged = restylePreset !== currentPreset || restyleCamera !== 'cut'
 
   const pair = useMemo(() => {
@@ -62,6 +65,8 @@ export default function Review({ results, onBack, onRestyle }: Props) {
     const clip = out ? clips[out.clip] : undefined
     return { out, clip }
   }, [outputs, clips, selected])
+  const previewKey = `${results.job_id}:${pair.out?.clip}:${reloadKey}`
+  const useOriginal = originalQuality || previewFailed === previewKey
 
   async function doExport(out: RenderOutput, clip: Clip) {
     const title = `${results.ingest?.title ?? 'clip'} ${fmtTime(clip.start)}`
@@ -164,17 +169,38 @@ export default function Review({ results, onBack, onRestyle }: Props) {
         })}
       </div>
 
+      {pair.clip && results.ingest?.probe && (
+        <div className="source-timeline-panel">
+          <div className="source-timeline-head"><span>SOURCE VIDEO</span><b>{fmtTime(results.ingest.probe.duration_sec)} total</b><span className="source-timeline-cut">Clip {selected + 1}: {fmtTime(pair.clip.start)} – {fmtTime(pair.clip.end)}</span></div>
+          <div className="source-timeline"><div className="source-timeline-progress" style={{ left: `${Math.max(0, Math.min(100, pair.clip.start / results.ingest.probe.duration_sec * 100))}%`, width: `${Math.max(1, Math.min(100, (pair.clip.end - pair.clip.start) / results.ingest.probe.duration_sec * 100))}%` }} /><span className="source-timeline-marker" style={{ left: `${Math.max(0, Math.min(100, pair.clip.start / results.ingest.probe.duration_sec * 100))}%` }} /><span className="source-timeline-marker end" style={{ left: `${Math.max(0, Math.min(100, pair.clip.end / results.ingest.probe.duration_sec * 100))}%` }} /></div>
+          <div className="source-timeline-labels"><span>0:00</span><span>{fmtTime(results.ingest.probe.duration_sec / 2)}</span><span>{fmtTime(results.ingest.probe.duration_sec)}</span></div>
+        </div>
+      )}
+
       {pair.out && pair.clip && (
         <div className="bay">
           <div className="monitor-wrap">
             <video
-              key={pair.out.path}
+              key={`${previewKey}:${useOriginal}`}
               className="monitor"
-              src={api.fileUrl(pair.out.path)}
+              src={useOriginal ? `${api.fileUrl(pair.out.path)}?v=${reloadKey}` : api.previewUrl(results.job_id, pair.out.clip, reloadKey)}
+              preload="auto"
+              onError={() => { if (!useOriginal) setPreviewFailed(previewKey) }}
               controls
               playsInline
             />
             <div className="monitor-actions">
+              <label style={{ display: 'block', color: 'var(--dim)', marginBottom: 8 }}>
+                Playback:{' '}
+                <select value={originalQuality ? 'original' : 'preview'} onChange={e => setOriginalQuality(e.target.value === 'original')}>
+                  <option value="preview">Fast preview · 720p</option>
+                  <option value="original">Original · full quality</option>
+                </select>
+              </label>
+              <p className="mono" style={{ color: 'var(--dim)', fontSize: 11 }}>
+                {previewFailed === previewKey && !originalQuality ? 'Preview unavailable — playing the original. ' : ''}
+                Downloads always use full quality.
+              </p>
               <button className="btn-secondary" onClick={() => setEditing(pair.out!.clip)}>
                 ✎ EDIT CLIP (bounds · cuts · visuals)
               </button>

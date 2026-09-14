@@ -22,6 +22,8 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -70,15 +72,19 @@ def nvenc_available() -> bool:
 _cuda_checked: bool | None = None
 
 def _cuda_decode_available() -> bool:
-    """Probe once: decode a short black clip with CUDA hwaccel."""
+    """Compatibility alias for callers of the old, ineffective decode probe."""
+    return cuda_scale_available()
+
+
+def cuda_scale_available() -> bool:
+    """Exercise the upload/scale/download path, not a lavfi 'decode'."""
     global _cuda_checked
     if _cuda_checked is None:
         proc = subprocess.run(
             [
                 ffmpeg_bin.ffmpeg(), "-nostdin", "-v", "error",
-                "-hwaccel", "cuda", "-hwaccel_output_format", "nv12",
                 "-f", "lavfi", "-i", "color=black:s=320x240:d=0.2",
-                "-vf", "scale=160:120",
+                "-vf", "format=yuv420p,hwupload_cuda,scale_cuda=160:120,hwdownload,format=yuv420p",
                 "-f", "null", "-",
             ],
             capture_output=True, timeout=60, stdin=subprocess.DEVNULL,
@@ -87,21 +93,41 @@ def _cuda_decode_available() -> bool:
     return _cuda_checked
 
 
+def scale_filter() -> str:
+    # CUDA also avoids the FFmpeg 6.1 software scaler stall when crop@c
+    # changes dimensions during a punch-in. Captions still require CPU frames.
+    if cuda_scale_available():
+        return f"format=yuv420p,hwupload_cuda,scale_cuda={OUT_W}:{OUT_H},hwdownload,format=yuv420p"
+    return f"scale={OUT_W}:{OUT_H},format=yuv420p"
+
+
 def _run_ffmpeg(
     args: list[str], duration: float, timeout: float,
     progress: Callable[[float], None] | None,
+    stall_timeout: float = 120.0,
 ) -> None:
     proc = subprocess.Popen(
         args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         stdin=subprocess.DEVNULL,
     )
-    stderr_lines: list[str] = []
+    stderr_lines: deque[str] = deque(maxlen=200)
+    last_advance = time.monotonic()
+    last_values = {"frame": -1.0, "out_time_ms": -1.0}
 
     def read_stdout() -> None:
+        nonlocal last_advance
         if proc.stdout is None:
             return
         for line in proc.stdout:
             key, _, value = line.partition("=")
+            if key in last_values:
+                try:
+                    number = float(value)
+                    if number > last_values[key]:
+                        last_values[key] = number
+                        last_advance = time.monotonic()
+                except ValueError:
+                    pass
             if key == "out_time_ms" and progress:
                 try:
                     progress(min(1.0, max(0.0, float(value) / 1_000_000 / duration)))
@@ -116,12 +142,26 @@ def _run_ffmpeg(
     stderr_thread = threading.Thread(target=read_stderr, daemon=True)
     stdout_thread.start()
     stderr_thread.start()
+    started = time.monotonic()
     try:
-        returncode = proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
+        while proc.poll() is None:
+            now = time.monotonic()
+            if now - started > timeout:
+                raise RuntimeError(f"Render timed out after {timeout:.0f}s.")
+            if now - last_advance > stall_timeout:
+                raise RuntimeError(
+                    f"Render stalled: FFmpeg made no frame/time progress for {stall_timeout:.0f}s. "
+                    f"Last output time: {max(0, last_values['out_time_ms']) / 1_000_000:.1f}s."
+                )
+            try:
+                proc.wait(timeout=min(0.5, stall_timeout, timeout))
+            except subprocess.TimeoutExpired:
+                pass
+        returncode = proc.returncode
+    except BaseException:
         proc.kill()
         proc.wait()
-        raise RuntimeError(f"Render timed out after {timeout:.0f}s.")
+        raise
     finally:
         stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
@@ -205,15 +245,14 @@ def render_clip(
 
     w0, h0, x0, y0 = boxes[0]
 
-    use_cuda = False
+    use_cuda = cuda_scale_available() and nvenc_available()
 
     if use_cuda:
-        # GPU-accelerated path: CUDA decode → crop/scale on GPU → hwdownload
-        # for CPU subtitle burn → hwupload back for NVENC encode.
+        # Dynamic crop on CPU, scale on CUDA, CPU subtitle burn, NVENC encode.
         vf_parts = [
             f"sendcmd=f={_q(cmd_path)}",
             f"crop@c=w={w0}:h={h0}:x={x0}:y={y0}",
-            f"hwupload_cuda,scale_cuda={OUT_W}:{OUT_H},hwdownload,format=yuv420p",
+            scale_filter(),
             "setsar=1",
         ]
         if ass_path is not None:
@@ -222,7 +261,7 @@ def render_clip(
                 sub += f":fontsdir={_q(fonts_dir)}"
             vf_parts.append(sub)
         vcodec = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", str(X264_CRF)]
-        hwaccel_args = ["-hwaccel", "cuda", "-hwaccel_output_format", "nv12"]
+        hwaccel_args = []
     else:
         vf_parts = [
             f"sendcmd=f={_q(cmd_path)}",

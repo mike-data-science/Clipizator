@@ -4,6 +4,8 @@ burn, loudnorm — and verifies the output probes clean."""
 
 import json
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -110,4 +112,52 @@ def test_render_smoke(tmp_path):
     )
     check = renderer.verify_output(out, 20.0)
     assert check["ok"], check
-    assert check["width"] == 1080 and check["height"] == 1920
+    assert check["width"] == renderer.OUT_W and check["height"] == renderer.OUT_H
+
+
+def test_render_watchdog_detects_stagnant_progress():
+    # FFmpeg can keep reporting progress=continue while producing no frames.
+    script = "import time\nwhile True:\n print('frame=7\\nout_time_ms=200000\\nprogress=continue', flush=True)\n time.sleep(0.05)"
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="Render stalled"):
+        renderer._run_ffmpeg(
+            [sys.executable, "-u", "-c", script], 10, 5, None, stall_timeout=0.3,
+        )
+    assert time.monotonic() - started < 4
+
+
+def test_render_watchdog_allows_advancing_frames():
+    script = "import time\nfor i in range(8):\n print(f'frame={i}\\nout_time_ms={i * 100000}', flush=True)\n time.sleep(0.1)"
+    progress = []
+    renderer._run_ffmpeg(
+        [sys.executable, "-u", "-c", script], 1, 5, progress.append, stall_timeout=0.5,
+    )
+    assert progress[-1] == pytest.approx(0.7)
+
+
+@pytest.mark.slow
+def test_cuda_render_dynamic_zoom(tmp_path):
+    """Regression: a changing crop size previously froze the software scaler."""
+    if not renderer.cuda_scale_available() or not renderer.nvenc_available():
+        pytest.skip("CUDA scaling and NVENC required")
+    src = tmp_path / "zoom-source.mp4"
+    subprocess.run([
+        ffmpeg_bin.ffmpeg(), "-nostdin", "-v", "error", "-y",
+        "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=4",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src),
+    ], check=True, timeout=30)
+    trajectory = {"fps": 25, "frames": (
+        [[100, 0, 404, 720]] * 25 + [[200, 36, 364, 648]] * 25
+        + [[300, 72, 324, 576]] * 25 + [[500, 0, 404, 720]] * 25
+    )}
+    ass_path = tmp_path / "zoom.ass"
+    ass_path.write_text(ass_mod.build_ass([ass_mod.Word("Zoom", 0, 4)], []))
+    out = tmp_path / "zoom.mp4"
+    progress = []
+    renderer.render_clip(str(src), out, 0, 4, trajectory, ass_path, ass_mod.FONTS_DIR,
+                         src_w=1280, src_h=720, timeout=40, progress=progress.append)
+    check = renderer.verify_output(out, 4)
+    assert check["ok"], check
+    assert (check["width"], check["height"]) == (renderer.OUT_W, renderer.OUT_H)
+    assert max(progress) > 0.95

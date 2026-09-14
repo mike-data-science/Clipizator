@@ -17,7 +17,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -300,52 +300,19 @@ def check_ollama():
 
 @app.get("/api/jobs")
 def list_jobs():
-    out = []
-    from publikclip_pipeline.campaigns import store
-    with queue._connect() as conn:
-        rows = conn.execute("SELECT id FROM jobs").fetchall()
+    from studio_jobs import list_rendered_jobs
 
-    for row in rows:
-        job = queue.get_job(row["id"])
-        if not job or not job.dir.exists():
-            continue
-        entry = job.dir
-        job_id = job.id
-        has_render = (entry / "render.json").exists()
-        has_ingest = (entry / "ingest.json").exists()
-        title = _resolve_job_title(job)
-        if not title:
-            if has_ingest:
-                try:
-                    d = json.loads((entry / "ingest.json").read_text(errors="replace"))
-                    ingest_title = d.get("data", {}).get("title") or d.get("title")
-                    if ingest_title and not _is_generic_title(ingest_title):
-                        title = ingest_title
-                except Exception:
-                    pass
-        if _is_generic_title(title):
-            title = None
-        if not title:
-            campaign_video_title = None
-            for campaign in store.list_campaigns():
-                for video in store.campaign_videos(campaign["id"]):
-                    if video.get("job_id") == job.id and video.get("title") and not _is_generic_title(video.get("title")):
-                        campaign_video_title = video.get("title")
-                        break
-                if campaign_video_title:
-                    break
-            if campaign_video_title:
-                title = campaign_video_title
-        if _is_generic_title(title):
-            title = None
-        out.append({
-            "id": job_id,
-            "title": title,
-            "ingested": has_ingest,
-            "rendered": has_render,
-        })
-    out.sort(key=lambda x: x["id"], reverse=True)
-    return out
+    # One local database read; no network metadata lookups or per-job migrations.
+    with queue._connect() as conn:
+        jobs = [queue._row_to_job(row) for row in conn.execute("SELECT * FROM jobs").fetchall()]
+        titles = {}
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='campaign_videos'").fetchone():
+            titles = {
+                row["job_id"]: row["title"] for row in conn.execute(
+                    "SELECT job_id, title FROM campaign_videos WHERE job_id IS NOT NULL AND title IS NOT NULL ORDER BY added_at"
+                ).fetchall()
+            }
+    return list_rendered_jobs(jobs, titles)
 
 
 @app.delete("/api/jobs/{job_id}")
@@ -766,6 +733,31 @@ async def save_clip_edits(job_id: str, body: dict):
 
 
 # -- Export --
+
+@app.get("/api/jobs/{job_id}/clips/{clip_index}/preview")
+def preview_clip(job_id: str, clip_index: int):
+    """Redirect to a cached, versioned playback copy with byte-range support."""
+    from urllib.parse import quote
+    from publikclip_pipeline.render.preview import ensure_preview
+
+    job = queue.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    rendered = _read_stage(job.dir, "render") or {}
+    output = next((o for o in rendered.get("outputs", []) if o.get("clip") == clip_index), None)
+    if not output:
+        raise HTTPException(404, "Rendered clip not found")
+    source = Path(output["path"].replace("\\", "/"))
+    if not source.is_file():
+        source = job.dir / "clips" / source.name
+    if not source.is_file():
+        raise HTTPException(404, "Clip file missing")
+    try:
+        preview = ensure_preview(source, float(output["duration"]))
+    except RuntimeError as err:
+        raise HTTPException(503, str(err)) from err
+    relative = preview.relative_to(_home().resolve()).as_posix()
+    return RedirectResponse(f"/media/{quote(relative, safe='/')}", headers={"Cache-Control": "no-store"})
 
 @app.get("/api/jobs/{job_id}/clips/{clip_index}/download")
 async def download_clip(job_id: str, clip_index: int, title: str | None = None):
@@ -1623,7 +1615,8 @@ async def serve_media(path: str):
         ".json": "application/json",
     }
     content_type = ct_map.get(ext, "application/octet-stream")
-    return FileResponse(full, media_type=content_type)
+    headers = {"Cache-Control": "private, max-age=31536000, immutable"} if ".previews" in full.parts else None
+    return FileResponse(full, media_type=content_type, headers=headers)
 
 # -- Static Frontend serving for Azure --
 @app.exception_handler(404)
