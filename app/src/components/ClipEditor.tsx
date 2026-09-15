@@ -381,7 +381,7 @@ export default function ClipEditor({ jobId, clipIndex, onClose, onRendered }: Pr
   return (
     <div className="editor-shell">
       <header className="editor-head">
-        <button className="btn-ghost" onClick={onClose}>← clips</button>
+        <button className="btn-ghost" onClick={onClose}>Back to project</button>
         <span className="mono editor-title">
           CLIP {clipIndex} · {fmt(edit.start)}–{fmt(edit.end)} ·{' '}
           {(edit.end - edit.start).toFixed(1)}s source

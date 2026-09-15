@@ -1,0 +1,3 @@
+cd ..
+Mike@clipozaurVm:~/Desktop/Clipizator$ source venv/bin/activate
+(venv) Mike@clipozaurVm:~/Desktop/Clipizator$ uvicorn backend.server:app --host 0.0.0.0 --port 8000

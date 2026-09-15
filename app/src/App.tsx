@@ -10,9 +10,11 @@ import { Analytics } from './components/Analytics'
 import { Queue } from './components/Queue'
 import { TranscribeQueue } from './components/TranscribeQueue'
 import ProjectClips from './components/ProjectClips'
+import ClipDetails from './components/ClipDetails'
+import Campaigns from './components/Campaigns'
 import './styles.css'
 
-type View = 'boot' | 'onboarding' | 'studio' | 'project' | 'review' | 'loop' | 'analytics' | 'queue' | 'transcribe_queue'
+type View = 'boot' | 'onboarding' | 'studio' | 'project' | 'clip-details' | 'review' | 'loop' | 'analytics' | 'campaigns' | 'queue' | 'transcribe_queue'
 
 export default function App() {
   const [view, setView] = useState<View>('boot')
@@ -21,6 +23,8 @@ export default function App() {
   const [activeJob, setActiveJob] = useState<string | null>(null)
   const [results, setResults] = useState<JobResults | null>(null)
   const [selectedClip, setSelectedClip] = useState(0)
+  const [editingClip, setEditingClip] = useState<number | null>(null)
+  const [editorBackTo, setEditorBackTo] = useState<'project' | 'clip-details'>('project')
   const [stages, setStages] = useState<Record<string, { fraction: number; message: string }>>({})
   const [running, setRunning] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
@@ -151,7 +155,7 @@ export default function App() {
     const r = await api.jobResults(jobId)
     setActiveJob(jobId)
     setResults(r)
-    if (r.render?.outputs?.length) { setSelectedClip(0); setView('project') }
+    if (r.render?.outputs?.length) { setView('project') }
   }, [])
 
   const handleGoToStudio = useCallback((url: string, jobId?: string) => {
@@ -223,7 +227,38 @@ export default function App() {
   }
 
   if (view === 'project' && results) {
-    return <ProjectClips results={results} onBack={() => setView('studio')} onOpenClip={(index) => { setSelectedClip(index); setView('review') }} onOpenAnalytics={() => setView('analytics')} onOpenLoop={() => setView('loop')} onOpenQueue={() => setView('queue')} onOpenTranscribeQueue={() => setView('transcribe_queue')} />
+    return <ProjectClips
+      results={results}
+      onBack={() => setView('studio')}
+      onOpenClipDetails={(clipIndex) => { setSelectedClip(clipIndex); setView('clip-details') }}
+      onEditClip={(clipIndex) => { setEditingClip(clipIndex); setEditorBackTo('project'); setView('review') }}
+      onOpenAnalytics={() => setView('analytics')}
+      onOpenCampaigns={() => setView('campaigns')}
+      onOpenLoop={() => setView('loop')}
+      onOpenQueue={() => setView('queue')}
+      onOpenTranscribeQueue={() => setView('transcribe_queue')}
+    />
+  }
+
+  if (view === 'clip-details' && results) {
+    return <ClipDetails
+      results={results}
+      clipIndex={selectedClip}
+      onBack={() => setView('project')}
+      onEdit={() => { setEditingClip(selectedClip); setEditorBackTo('clip-details'); setView('review') }}
+    />
+  }
+
+  if (view === 'campaigns') {
+    return <Campaigns
+      onBack={() => setView('studio')}
+      onOpenProject={async (jobId) => {
+        const campaignResults = await api.jobResults(jobId)
+        setActiveJob(jobId)
+        setResults(campaignResults)
+        setView('project')
+      }}
+    />
   }
 
   if (view === 'review' && results) {
@@ -231,7 +266,13 @@ export default function App() {
       <Review
         results={results}
         initialClip={selectedClip}
+        initialEditClip={editingClip}
         onBack={() => {
+          if (editingClip !== null) {
+            setEditingClip(null)
+            setView(editorBackTo)
+            return
+          }
           setView('studio')
           refreshJobs()
         }}

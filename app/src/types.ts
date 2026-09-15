@@ -85,6 +85,7 @@ export interface JobSummary {
   duration_sec?: number | null
   thumbnail_url?: string | null
   source?: string
+  views?: number | null
 }
 
 export interface SetupState {

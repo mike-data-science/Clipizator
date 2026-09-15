@@ -21,6 +21,7 @@ interface Props {
   onBack: () => void
   onRestyle: (captions: string, camera: string) => void
   initialClip?: number
+  initialEditClip?: number | null
 }
 
 const RULE_LABELS: Record<string, string> = {
@@ -45,7 +46,7 @@ function fmtTime(t: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-export default function Review({ results, onBack, onRestyle, initialClip = 0 }: Props) {
+export default function Review({ results, onBack, onRestyle, initialClip = 0, initialEditClip = null }: Props) {
   const outputs = results.render?.outputs ?? []
   const clips = results.score?.clips ?? []
   const [selected, setSelected] = useState(initialClip)
@@ -54,7 +55,8 @@ export default function Review({ results, onBack, onRestyle, initialClip = 0 }: 
   const currentPreset = results.render?.caption_preset ?? 'hormozi'
   const [restylePreset, setRestylePreset] = useState(currentPreset)
   const [restyleCamera, setRestyleCamera] = useState('cut')
-  const [editing, setEditing] = useState<number | null>(null)
+  const editOnly = initialEditClip !== null
+  const [editing, setEditing] = useState<number | null>(initialEditClip)
   const [reloadKey, setReloadKey] = useState(0)
   const [originalQuality, setOriginalQuality] = useState(false)
   const [previewFailed, setPreviewFailed] = useState<string | null>(null)
@@ -87,13 +89,12 @@ export default function Review({ results, onBack, onRestyle, initialClip = 0 }: 
 
   if (editing !== null) {
     return (
-      <div className="review">
-        <div className="grain" />
+      <div className="clip-editor-page">
         <ClipEditor
           key={`${editing}-${reloadKey}`}
           jobId={results.job_id}
           clipIndex={editing}
-          onClose={() => setEditing(null)}
+          onClose={() => editOnly ? onBack() : setEditing(null)}
           onRendered={() => setReloadKey((k) => k + 1)}
         />
       </div>

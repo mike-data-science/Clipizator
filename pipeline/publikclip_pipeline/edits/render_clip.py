@@ -33,6 +33,12 @@ def _load_stage(job_dir: Path, stage: str) -> dict:
     return data
 
 
+def _artifact_path(job_dir: Path, saved_path: str) -> Path:
+    """Use a saved artifact path, or its project-local counterpart after relocation."""
+    path = Path(saved_path.replace("\\", "/"))
+    return path if path.exists() else job_dir / path.name
+
+
 def context_for_clip(job_dir: Path, clip_idx: int, pad: float = 45.0) -> dict:
     """Everything the timeline UI needs, in one JSON blob."""
     ingest = _load_stage(job_dir, "ingest")
@@ -52,7 +58,7 @@ def context_for_clip(job_dir: Path, clip_idx: int, pad: float = 45.0) -> dict:
         for w in seg.get("words", [])
         if win_a <= w["start"] <= win_b
     ]
-    curves = json.loads(Path(events["curves_path"]).read_text())
+    curves = json.loads(_artifact_path(job_dir, events["curves_path"]).read_text())
     grid = float(curves["grid_sec"])
     rms = curves["rms"][int(win_a / grid) : int(win_b / grid)]
     clip_events = [
@@ -69,9 +75,11 @@ def context_for_clip(job_dir: Path, clip_idx: int, pad: float = 45.0) -> dict:
     if camera_path.exists():
         cam = json.loads(camera_path.read_text())["data"]
         traj_file = cam.get("trajectories", {}).get(str(clip_idx))
-        if traj_file and Path(traj_file).exists():
-            t = json.loads(Path(traj_file).read_text())
-            trajectory = {"fps": t.get("fps", 25), "frames": t.get("frames", [])}
+        if traj_file:
+            trajectory_path = _artifact_path(job_dir, traj_file)
+            if trajectory_path.exists():
+                t = json.loads(trajectory_path.read_text())
+                trajectory = {"fps": t.get("fps", 25), "frames": t.get("frames", [])}
 
     return {
         "clip_index": clip_idx,

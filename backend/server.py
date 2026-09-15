@@ -312,7 +312,54 @@ def list_jobs():
                     "SELECT job_id, title FROM campaign_videos WHERE job_id IS NOT NULL AND title IS NOT NULL ORDER BY added_at"
                 ).fetchall()
             }
-    return list_rendered_jobs(jobs, titles)
+    summaries = list_rendered_jobs(jobs, titles)
+    jobs_by_id = {job.id: job for job in jobs}
+
+    for summary in summaries:
+        job = jobs_by_id.get(summary["id"])
+        if not job:
+            continue
+        media_candidates = [job.dir / "media.info.json", *job.dir.glob("media*.info.json"), job.dir / "media.json"]
+        media_path = next((path for path in media_candidates if path.exists()), None)
+        ingest_title = None
+        try:
+            ingest = json.loads((job.dir / "ingest.json").read_text(errors="replace"))
+            ingest_title = (ingest.get("data", ingest) or {}).get("title")
+        except (OSError, ValueError, TypeError):
+            pass
+        if media_path is None:
+            if ingest_title:
+                summary["title"] = ingest_title
+            continue
+        try:
+            media = json.loads(media_path.read_text(errors="replace"))
+            media = media.get("data", media)
+            # Downloader metadata has changed names over time, so accept the
+            # common variants without making old jobs lose their card details.
+            summary["title"] = media.get("fulltitle") or media.get("title") or ingest_title or summary.get("title")
+            summary["views"] = media.get("view_count", media.get("views", media.get("viewCount")))
+            thumbnails = media.get("thumbnails") or []
+            thumbnail = media.get("thumbnail_path") or media.get("thumbnail_file") or media.get("thumbnail") or media.get("thumbnail_url")
+            if not thumbnail and isinstance(thumbnails, list):
+                # yt-dlp stores several remote image variants here. Prefer
+                # the final (normally largest) URL when no local image exists.
+                for candidate in reversed(thumbnails):
+                    if isinstance(candidate, dict) and candidate.get("url"):
+                        thumbnail = candidate["url"]
+                        break
+            if thumbnail:
+                thumbnail_path = Path(str(thumbnail).replace("\\", "/"))
+                resolved_thumbnail = thumbnail_path if thumbnail_path.is_file() else job.dir / thumbnail_path.name
+                if resolved_thumbnail.is_file():
+                    try:
+                        summary["thumbnail_url"] = "/media/" + resolved_thumbnail.relative_to(config.home_dir()).as_posix()
+                    except ValueError:
+                        summary["thumbnail_url"] = str(resolved_thumbnail)
+                else:
+                    summary["thumbnail_url"] = str(thumbnail)
+        except (OSError, ValueError, TypeError):
+            continue
+    return summaries
 
 
 @app.delete("/api/jobs/{job_id}")
