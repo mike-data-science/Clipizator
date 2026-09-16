@@ -12,9 +12,10 @@ import { TranscribeQueue } from './components/TranscribeQueue'
 import ProjectClips from './components/ProjectClips'
 import ClipDetails from './components/ClipDetails'
 import Campaigns from './components/Campaigns'
+import { AnalyzerVideos, AnalyzerVideoDetail, CreatorSources, CreatorSourceDetail, ResearchQueue } from './components/Analyzer'
 import './styles.css'
 
-type View = 'boot' | 'onboarding' | 'studio' | 'project' | 'clip-details' | 'review' | 'loop' | 'analytics' | 'campaigns' | 'queue' | 'transcribe_queue'
+type View = 'boot' | 'onboarding' | 'studio' | 'project' | 'clip-details' | 'review' | 'loop' | 'analytics' | 'campaigns' | 'queue' | 'transcribe_queue' | 'analyzer' | 'analyzer-detail' | 'analyzer-sources' | 'analyzer-source-detail' | 'analyzer-research-queue'
 
 export default function App() {
   const [view, setView] = useState<View>('boot')
@@ -29,6 +30,8 @@ export default function App() {
   const [running, setRunning] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
   const [prefilledSource, setPrefilledSource] = useState<string>('')
+  const [analyzerJobId, setAnalyzerJobId] = useState<string | null>(null)
+  const [creatorSourceId, setCreatorSourceId] = useState<number | null>(null)
   
   const unlistenRef = useRef<(() => void) | null>(null)
   const activeJobRef = useRef<string | null>(null)
@@ -70,7 +73,7 @@ export default function App() {
     let disposed = false
     listen<PipelineEvent>('pipeline-event', ({ payload }: any) => {
       // Background queue jobs shouldn't hijack the Studio UI
-      if (payload.source === 'queue') return
+      if (payload.source === 'queue' || payload.source === 'research_queue') return
 
       if (payload.event === 'job' && payload.job_id) {
         setActiveJob(payload.job_id)
@@ -261,6 +264,37 @@ export default function App() {
     />
   }
 
+  if (view === 'analyzer') {
+    return <AnalyzerVideos
+      onBack={() => setView('studio')}
+      onOpen={(jobId) => { setAnalyzerJobId(jobId); setView('analyzer-detail') }}
+      onSources={() => setView('analyzer-sources')}
+      onQueue={() => setView('analyzer-research-queue')}
+    />
+  }
+
+  if (view === 'analyzer-detail' && analyzerJobId) {
+    return <AnalyzerVideoDetail
+      jobId={analyzerJobId}
+      onBack={() => setView('analyzer')}
+      onHome={() => setView('studio')}
+      onSources={() => setView('analyzer-sources')}
+      onQueue={() => setView('analyzer-research-queue')}
+    />
+  }
+
+  if (view === 'analyzer-sources') {
+    return <CreatorSources onBack={() => setView('analyzer')} onQueue={() => setView('analyzer-research-queue')} onOpen={(id) => { setCreatorSourceId(id); setView('analyzer-source-detail') }} />
+  }
+
+  if (view === 'analyzer-source-detail' && creatorSourceId !== null) {
+    return <CreatorSourceDetail creatorId={creatorSourceId} onBack={() => setView('analyzer-sources')} onHome={() => setView('studio')} onQueue={() => setView('analyzer-research-queue')} />
+  }
+
+  if (view === 'analyzer-research-queue') {
+    return <ResearchQueue onBack={() => setView('analyzer')} onSources={() => setView('analyzer-sources')} onOpen={(jobId) => { setAnalyzerJobId(jobId); setView('analyzer-detail') }} />
+  }
+
   if (view === 'review' && results) {
     return (
       <Review
@@ -313,6 +347,10 @@ export default function App() {
       onOpenTranscribeQueue={() => {
         setPrefilledSource('')
         setView('transcribe_queue')
+      }}
+      onOpenAnalyzer={() => {
+        setPrefilledSource('')
+        setView('analyzer')
       }}
       onOpenJob={openJob}
       onResume={(id, llm, geminiModel, asrModel) => {

@@ -93,6 +93,175 @@ export interface SetupState {
   onboarded: boolean
 }
 
+export interface AnalyzerVideoSummary {
+  job_id: string
+  status: string
+  created_at: number
+  analyzed_at: number | null
+  duration_sec: number
+  source: {
+    title: string | null
+    type: string | null
+    platform: string | null
+    source_url: string | null
+    video_url: string | null
+    thumbnail_url: string | null
+  }
+  model: string | null
+  scene_count: number | null
+  speaker_count: number | null
+  audio_event_count: number | null
+  candidate_count: number | null
+  scored_count: number | null
+}
+
+export interface AnalyzerWord {
+  word: string
+  start: number
+  end: number
+  score?: number
+  speaker?: number
+}
+
+export interface AnalyzerSegment {
+  start: number
+  end: number
+  text: string
+  speaker?: number
+  words?: AnalyzerWord[]
+}
+
+export interface AnalyzerCandidate extends Partial<Clip> {
+  start: number
+  end: number
+  t1_raw?: Record<string, unknown>
+  transcript?: string
+}
+
+export interface AnalyzerBBox { x: number; y: number; width: number; height: number }
+
+export interface AnalyzerTextTrack {
+  id: string; start: number; end: number; text: string; confidence: number
+  bbox: AnalyzerBBox; center_x: number; center_y: number; relative_size: number; height_ratio: number
+  line_count: number; duration: number; sample_hits: number
+  classification: 'title_hook' | 'subtitles/captions' | 'label' | 'CTA' | 'watermark/username' | 'other'
+  classification_confidence: number; canvas_position: 'top' | 'upper_middle' | 'center' | 'lower_middle' | 'bottom'
+  content_relation: 'above_content' | 'overlay_top' | 'overlay_center' | 'overlay_bottom' | 'below_content' | 'outside_content'
+  provenance: { detector: string; version: string | null }
+}
+
+export interface AnalyzerTimedEvidence {
+  start: number; end: number; confidence: number; type?: string; face_count?: number
+  [key: string]: unknown
+}
+
+export type CreatorPerformanceLabel = 'strong' | 'average' | 'weak' | 'unclassified'
+export type CreatorSelectionReason = 'creator_relative_strong' | 'creator_relative_average' | 'creator_relative_weak' | 'top_views' | 'manual' | 'editing_reference'
+export type ResearchQueueStatus = 'queued' | 'claimed_by_worker' | 'downloading' | 'uploading' | 'uploaded' | 'analyzing' | 'completed' | 'failed' | 'cancelled'
+
+export interface CreatorSourceVideo {
+  id: number; platform: 'youtube'; external_video_id: string; creator_source_id: number
+  canonical_url: string; title: string | null; published_at: number | null; duration_sec: number | null
+  views: number | null; likes: number | null; comments: number | null; thumbnail_url: string | null
+  first_seen_at: number; last_metadata_refresh_at: number; download_status: string; analysis_status: string
+  analysis_job_id: string | null; derived_performance_label: CreatorPerformanceLabel
+  manual_performance_label: CreatorPerformanceLabel | null; performance_label: CreatorPerformanceLabel
+  performance_metric: string | null; is_reference: boolean; is_editing_reference: boolean
+  tab_origin: string | null; content_type: 'video' | 'short' | null
+  selected_for_analysis: boolean; selected_at: number | null; selection_reason: CreatorSelectionReason | null
+  research_queue_item_id: number | null; research_queue_status: ResearchQueueStatus | null
+}
+
+export interface CreatorSource {
+  id: number; platform: 'youtube'; external_creator_id: string | null; handle: string | null
+  display_name: string | null; canonical_channel_url: string; thumbnail_url: string | null
+  subscriber_count: number | null; first_seen_at: number; last_refreshed_at: number; video_count?: number
+}
+
+export interface CreatorSourceDetail extends CreatorSource {
+  videos: CreatorSourceVideo[]
+  selection_summary: { selected: number; strong: number; average: number; weak: number; manual_reference: number }
+}
+
+export interface ResearchQueueItem {
+  id: number; creator_video_id: number; creator_source_id: number; platform: 'youtube'
+  external_video_id: string; canonical_url: string; catalog_title: string | null
+  creator_handle: string | null; creator_display_name: string | null; source_metadata: Record<string, unknown>
+  status: ResearchQueueStatus; created_at: number; started_at: number | null; completed_at: number | null
+  updated_at: number; failure_reason: string | null; job_id: string | null
+  analysis_status: string | null; analysis_error: string | null; progress_stage: string | null
+}
+
+export interface QueueSelectedResult {
+  queued_count: number; skipped_already_queued: number; skipped_already_analyzed: number
+  errors: Array<{ creator_video_id: number; error: string }>; queue_item_ids: number[]
+}
+
+export interface AnalyzerVideoDetail {
+  job: AnalyzerVideoSummary & { error: string | null }
+  source: AnalyzerVideoSummary['source'] & { probe: Record<string, number | string | boolean | null>; heatmap_available: boolean }
+  transcript: { language: string | null; model: string | null; word_count: number | null; segments: AnalyzerSegment[] }
+  speakers: { count: number | null; turns: Array<{ speaker: number; start: number; end: number }> }
+  scenes: { timestamps: number[]; count: number | null; detector_outcome: string | null; detector_error: string | null }
+  audio: {
+    events: Array<{ type: string; start: number; end: number; confidence?: number; sources?: string[] }>
+    counts: Record<string, number>
+    arousal_source: string | null
+    curves: Array<{ name: string; values: number[]; sample_count: number; grid_sec: number | null; min: number | null; max: number | null; mean: number | null }>
+  }
+  source_analysis: {
+    available: boolean
+    text_tracks: AnalyzerTextTrack[]
+    title_hook_candidates: Array<{
+      track_id: string; text: string; start: number; end: number; confidence: number
+      classification: 'title_hook'; bbox: AnalyzerBBox; canvas_position: string; content_relation: string
+      evidence: Record<string, unknown>; provenance: Record<string, unknown>
+    }>
+    source_layout: null | {
+      canvas_aspect_ratio: number; primary_content_bbox: AnalyzerBBox; primary_content_aspect_ratio: number
+      layout_mode: string; approximate_shape: string; rounded_corners: boolean; split_screen: boolean
+      background_relationship: string; confidence: number; provenance: Record<string, unknown>
+    }
+    layout_signature: Record<string, unknown> | null
+    visual_observations: AnalyzerTimedEvidence[]
+    source_editing_evidence: {
+      shot_cuts: AnalyzerTimedEvidence[]; visual_change_density_per_minute: number | null
+      layout_changes: AnalyzerTimedEvidence[]; b_roll_candidates: AnalyzerTimedEvidence[]; provenance: Record<string, unknown>
+    }
+    runtime: {
+      ocr_sec: number | null; layout_sec: number | null; visual_sampling_sec: number | null
+      sample_count: number | null; device: string | null; onnx_providers: string[]; artifact_size_bytes: number | null
+    }
+    provenance: Record<string, unknown>
+  }
+  candidate_analysis: { candidate_count: number | null; scored_count: number | null; clips: AnalyzerCandidate[] }
+  generated_edit: {
+    camera_settings: Record<string, unknown>
+    camera_stats: Array<{ clip: number; tracks: number; switch_cuts: number; shot_cuts: number; punches: number }>
+    device: string | null
+    trajectories: Array<{
+      clip: number; clip_start: number; clip_end: number; fps: number | null; frame_count: number; cuts: number[]
+      punches: Array<{ start: number; end: number; source_start: number; source_end: number; trigger: string }>
+      meta: Record<string, unknown>; crop_summary: { min_width: number | null; max_width: number | null }
+    }>
+    render: {
+      outputs: Array<RenderOutput & { url: string | null }>
+      caption_preset: string | null; caption_color: string | null; captions_burned: boolean | null
+      acceleration: Record<string, string>
+    }
+  }
+  provenance: {
+    llm_mode: string | null; model: string | null
+    llm_generation: { thinking_enabled?: boolean | null; generation_options?: Record<string, unknown> }
+    scoring_config_version: number | null; asr_model: string | null; asr_device: string | null
+    diarization_device: string | null; event_device: string | null
+  }
+  qa: Array<{
+    id: number; start_sec: number; end_sec: number; target_type: string
+    original: unknown; corrected: unknown; note: string | null; created_at: number
+  }>
+}
+
 /* ---------- the Instagram loop ---------- */
 
 export interface LoopMetrics {

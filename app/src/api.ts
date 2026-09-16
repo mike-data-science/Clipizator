@@ -1,4 +1,4 @@
-import type { JobResults, JobSummary, LoopOverview, SetupState, SyncSummary, Campaign, CampaignFull, CampaignVideo, CampaignClip, CampaignMoment } from './types'
+import type { JobResults, JobSummary, LoopOverview, SetupState, SyncSummary, Campaign, CampaignFull, CampaignVideo, CampaignClip, CampaignMoment, AnalyzerVideoSummary, AnalyzerVideoDetail, CreatorPerformanceLabel, CreatorSelectionReason, CreatorSource, CreatorSourceDetail, CreatorSourceVideo, QueueSelectedResult, ResearchQueueItem } from './types'
 
 const API = '/api'
 
@@ -122,6 +122,20 @@ export const api = {
   setupState: () => get<SetupState>('/setup'),
   markOnboarded: () => post<void>('/setup/onboard'),
   checkOllama: () => get<{ running: boolean; models: string[] }>('/ollama/status'),
+  listAnalyzerVideos: () => get<AnalyzerVideoSummary[]>('/analyzer/videos'),
+  analyzerVideo: (jobId: string) => get<AnalyzerVideoDetail>(`/analyzer/videos/${encodeURIComponent(jobId)}`),
+  listCreatorSources: () => get<CreatorSource[]>('/analyzer/sources'),
+  addCreatorSource: (source: string) => post<CreatorSourceDetail>('/analyzer/sources', { source }),
+  refreshCreatorSource: (id: number) => post<CreatorSourceDetail>(`/analyzer/sources/${id}/refresh`),
+  creatorSource: (id: number) => get<CreatorSourceDetail>(`/analyzer/sources/${id}`),
+  setCreatorVideoPerformance: (id: number, label: CreatorPerformanceLabel | null) => put<CreatorSourceVideo>(`/analyzer/source-videos/${id}/performance`, { label }),
+  setCreatorVideoReferences: (id: number, reference?: boolean, editing_reference?: boolean) => put<CreatorSourceVideo>(`/analyzer/source-videos/${id}/references`, { reference, editing_reference }),
+  setCreatorSelection: (creatorId: number, videoIds: number[], selected: boolean, reason: CreatorSelectionReason | null = null) => put<CreatorSourceDetail>(`/analyzer/sources/${creatorId}/selection`, { video_ids: videoIds, selected, reason }),
+  clearCreatorSelection: (creatorId: number) => post<CreatorSourceDetail>(`/analyzer/sources/${creatorId}/selection/clear`),
+  autoSelectCreatorSample: (creatorId: number) => post<CreatorSourceDetail>(`/analyzer/sources/${creatorId}/selection/auto`),
+  queueSelectedCreatorVideos: (creatorId: number) => post<QueueSelectedResult>(`/analyzer/sources/${creatorId}/research-queue`),
+  listResearchQueue: () => get<ResearchQueueItem[]>('/analyzer/research-queue'),
+  retryResearchQueueItem: (itemId: number) => post<ResearchQueueItem>(`/analyzer/research-queue/${itemId}/retry`),
   exportClip: (jobId: string, clipIndex: number, title?: string) => {
     // Trigger a browser download
     const params = new URLSearchParams()

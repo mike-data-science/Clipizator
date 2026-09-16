@@ -89,13 +89,14 @@ interface Props {
   onOpenAnalytics: () => void
   onOpenQueue: () => void
   onOpenTranscribeQueue: () => void
+  onOpenAnalyzer: () => void
   onOpenJob: (id: string) => void
   onResume: (id: string, llm?: string, geminiModel?: string, asrModel?: string) => void
   onDeleteJob: (id: string) => void
   onUpload: (file: File, llm: string, geminiModel: string, captions: string, asrModel: string) => void
 }
 
-export default function Studio({ jobs, jobsLoading, jobsError, running, stages, error, initialSource, onRun, onUpload, onOpenLoop, onOpenAnalytics, onOpenQueue, onOpenTranscribeQueue, onOpenJob, onResume, onDeleteJob }: Props) {
+export default function Studio({ jobs, jobsLoading, jobsError, running, stages, error, initialSource, onRun, onUpload, onOpenLoop, onOpenAnalytics, onOpenQueue, onOpenTranscribeQueue, onOpenAnalyzer, onOpenJob, onResume, onDeleteJob }: Props) {
   const [source, setSource] = useState(initialSource || '')
   const [llm, setLlm] = useState('ollama')
   const [geminiModel, setGeminiModel] = useState('gemini-3.7-flash')
@@ -134,7 +135,7 @@ export default function Studio({ jobs, jobsLoading, jobsError, running, stages, 
     cyan: '#00E5FF',
   } as const
 
-  return <RedesignedStudio jobs={jobs} running={running} initialSource={initialSource} onRun={onRun} onUpload={onUpload} onOpenJob={onOpenJob} onOpenLoop={onOpenLoop} onOpenQueue={onOpenQueue} onOpenTranscribeQueue={onOpenTranscribeQueue} />
+  return <RedesignedStudio jobs={jobs} running={running} initialSource={initialSource} onRun={onRun} onUpload={onUpload} onOpenJob={onOpenJob} onOpenLoop={onOpenLoop} onOpenQueue={onOpenQueue} onOpenTranscribeQueue={onOpenTranscribeQueue} onOpenAnalyzer={onOpenAnalyzer} />
 
   const renderCaptionPreview = () => {
     const currentPhrase = SAMPLE_PHRASES[phraseIdx]
