@@ -37,7 +37,8 @@ def test_manifest_records_runtime_outcome_and_artifact():
     job = queue.create_job("file", "/tmp/x.mp4", _settings_json())
     queue.run_stages(job, [ArtifactStage()], _noop_progress)
 
-    manifest = json.loads((job.dir / "pilot_manifest.json").read_text())
+    manifest_path = config.pilot_manifests_dir() / f"{job.id}.json"
+    manifest = json.loads(manifest_path.read_text())
     stage = manifest["stages"][0]
     assert manifest["manifest_version"] == 1
     assert manifest["code_revision"]
@@ -45,6 +46,7 @@ def test_manifest_records_runtime_outcome_and_artifact():
     assert stage["outcome"] == "success_with_detections"
     assert stage["runtime_sec"] >= 0
     assert stage["artifacts"][0]["path"].endswith("counting.json")
+    assert not (job.dir / "pilot_manifest.json").exists()
 
 
 def test_manifest_records_failed_stage():
@@ -52,7 +54,7 @@ def test_manifest_records_failed_stage():
     with pytest.raises(queue.StageError):
         queue.run_stages(job, [FailingStage()], _noop_progress)
 
-    manifest = json.loads((job.dir / "pilot_manifest.json").read_text())
+    manifest = json.loads((config.pilot_manifests_dir() / f"{job.id}.json").read_text())
     assert manifest["job_status"] == "failed"
     assert manifest["stages"][0]["outcome"] == "failed"
     assert "pilot failure" in manifest["stages"][0]["error"]
@@ -112,3 +114,21 @@ def test_summary_backfills_legacy_stage_rows():
     assert stage["stage"] == "asr"
     assert stage["outcome"] == "success_with_detections"
     assert stage["runtime_sec"] is not None
+
+
+def test_pilot_paths_and_summary_are_under_configured_home():
+    config.ensure_home()
+    root = config.home_dir()
+    assert config.pilot_manifests_dir() == root / "pilot" / "manifests"
+    assert config.pilot_summaries_dir() == root / "pilot" / "summaries"
+    assert config.pilot_qa_dir() == root / "pilot" / "qa"
+    assert config.cache_dir() == root / "cache"
+    assert config.backups_dir() == root / "backups"
+    assert all(path.is_dir() for path in (
+        config.pilot_manifests_dir(), config.pilot_summaries_dir(),
+        config.pilot_qa_dir(), config.cache_dir(), config.backups_dir(),
+    ))
+
+    path = pilot.write_summary({"summary_version": 1, "jobs": []})
+    assert path.parent == config.pilot_summaries_dir()
+    assert json.loads(path.read_text())["summary_version"] == 1

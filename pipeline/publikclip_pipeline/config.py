@@ -5,8 +5,11 @@ Everything lives under PUBLIKCLIP_HOME (default ~/.publikclip):
     ~/.publikclip/
       db.sqlite3          job + stage bookkeeping
       bin/                managed binaries (yt-dlp)
+      cache/              reusable application caches
       models/             downloaded model weights
       jobs/<job_id>/      per-job artifacts (media, audio, stage checkpoints)
+      pilot/              Analyzer pilot manifests, summaries, and QA files
+      backups/            reserved backup location
 
 The desktop app points PUBLIKCLIP_HOME at its own app-data dir; the CLI uses
 the default. Artifacts on disk are the source of truth — the DB only records
@@ -36,13 +39,40 @@ def models_dir() -> Path:
     return home_dir() / "models"
 
 
+def cache_dir() -> Path:
+    return home_dir() / "cache"
+
+
+def backups_dir() -> Path:
+    return home_dir() / "backups"
+
+
+def pilot_dir() -> Path:
+    return home_dir() / "pilot"
+
+
+def pilot_manifests_dir() -> Path:
+    return pilot_dir() / "manifests"
+
+
+def pilot_summaries_dir() -> Path:
+    return pilot_dir() / "summaries"
+
+
+def pilot_qa_dir() -> Path:
+    return pilot_dir() / "qa"
+
+
 def db_path() -> Path:
     return home_dir() / "db.sqlite3"
 
 
 def ensure_home() -> Path:
     root = home_dir()
-    for d in (root, jobs_dir(), bin_dir(), models_dir()):
+    for d in (
+        root, jobs_dir(), bin_dir(), cache_dir(), models_dir(), backups_dir(),
+        pilot_manifests_dir(), pilot_summaries_dir(), pilot_qa_dir(),
+    ):
         d.mkdir(parents=True, exist_ok=True)
     return root
 

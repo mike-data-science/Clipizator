@@ -13,6 +13,7 @@ import os
 import platform
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -325,11 +326,23 @@ def build_manifest(conn, job: Any) -> dict[str, Any]:
 
 def write_manifest(conn, job: Any) -> dict[str, Any]:
     manifest = build_manifest(conn, job)
-    path = job.dir / "pilot_manifest.json"
+    path = config.pilot_manifests_dir() / f"{job.id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
     return manifest
+
+
+def write_summary(summary: dict[str, Any]) -> Path:
+    directory = config.pilot_summaries_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    path = directory / f"pilot-summary-{timestamp}.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+    return path
 
 
 def _category(path: Path) -> str:

@@ -142,6 +142,7 @@ def cmd_pilot_summary(args: argparse.Namespace) -> int:
         jobs = queue.list_jobs(limit=args.limit)
     with queue._connect() as conn:  # noqa: SLF001 - CLI report over queue catalog
         summary = pilot.summarize(conn, jobs)
+    pilot.write_summary(summary)
     print(json.dumps(summary, indent=2) if args.json else pilot.human_summary(summary))
     return 0
 
