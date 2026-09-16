@@ -58,10 +58,16 @@ class CandidatesStage(Stage):
         if not media.exists():
             media = ctx.job_dir / Path(media_str).name
             
+        scene_detector_outcome = "success_no_detections"
+        scene_detector_error = None
         try:
             scene_times = detect_scenes(str(media))
-        except Exception:  # noqa: BLE001 — scenes are a minor channel; degrade
+            if scene_times:
+                scene_detector_outcome = "success_with_detections"
+        except Exception as err:  # noqa: BLE001 — scenes are a minor channel; degrade
             scene_times = []
+            scene_detector_outcome = "unavailable"
+            scene_detector_error = f"{type(err).__name__}: {err}"
         (ctx.job_dir / "scenes.json").write_text(json.dumps(scene_times))
 
         ctx.emit(0.6, "Building interest curve…")
@@ -95,5 +101,7 @@ class CandidatesStage(Stage):
             "count": len(candidates),
             "effective_weights": effective_weights,
             "scene_count": len(scene_times),
+            "scene_detector_outcome": scene_detector_outcome,
+            "scene_detector_error": scene_detector_error,
             "heatmap_present": bool(ingest.get("heatmap")),
         }

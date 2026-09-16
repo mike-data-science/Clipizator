@@ -45,7 +45,7 @@ class DiarizeStage(Stage):
         segments = asr["segments"]
         windows = campplus.speech_windows(segments, duration)
         if not windows:
-            return {"speakers": 0, "turns": [], "segments": segments}
+            return {"speakers": 0, "turns": [], "segments": segments, "device": str(device)}
 
         # Mid-stage cache: embedding an hour of speech costs real minutes and
         # the stage checkpoint only lands at the end — a crash after embedding
@@ -79,6 +79,7 @@ class DiarizeStage(Stage):
         speakers = int(len(np.unique(labels))) if len(labels) else 0
         return {
             "speakers": speakers,
+            "device": str(device),
             "turns": turns,
             "segments": segments,  # transcript enriched with word/segment speakers
         }

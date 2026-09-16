@@ -100,4 +100,6 @@ class CameraStage(Stage):
             "trajectories": trajectories,
             "stats": stats,
             "camera_settings": ctx.settings.camera.__dict__.copy(),
+            "device": device,
+            "onnx_providers": model.frontend.get_providers(),
         }

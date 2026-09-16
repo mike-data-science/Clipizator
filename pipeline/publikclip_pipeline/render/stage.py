@@ -144,4 +144,5 @@ class RenderStage(Stage):
             "captions_burned": captions_ok,
             "caption_preset": preset,
             "caption_color": caption_color,
+            "acceleration": {"scaling": scaling, "encoding": encoding},
         }

@@ -185,6 +185,7 @@ class EventsStage(Stage):
             "curves_path": str(curves_path),
             "arousal_source": arousal_source,
             "duration_sec": round(duration, 1),
+            "device": str(device),
             "benchmark": bench,
             # Measured constant, recorded once for M3's punch-in math:
             "panns_effective_resolution_sec": 0.32,

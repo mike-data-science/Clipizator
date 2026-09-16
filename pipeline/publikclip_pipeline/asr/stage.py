@@ -158,8 +158,9 @@ class AsrStage(Stage):
         total = transcribe_secs + align_secs
         return {
             "language": language,
-            "model": ASR_MODEL,
+            "model": asr_model_name,
             "compute_type": compute_type,
+            "device": device,
             "segments": segments,
             "word_count": word_count,
             "benchmark": {

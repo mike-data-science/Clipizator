@@ -127,6 +127,48 @@ def cmd_jobs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pilot_summary(args: argparse.Namespace) -> int:
+    from . import pilot
+
+    jobs = []
+    if args.job_ids:
+        for job_id in args.job_ids:
+            job = queue.get_job(job_id)
+            if job is None:
+                print(f"No job {job_id}", file=sys.stderr)
+                return 2
+            jobs.append(job)
+    else:
+        jobs = queue.list_jobs(limit=args.limit)
+    with queue._connect() as conn:  # noqa: SLF001 - CLI report over queue catalog
+        summary = pilot.summarize(conn, jobs)
+    print(json.dumps(summary, indent=2) if args.json else pilot.human_summary(summary))
+    return 0
+
+
+def cmd_pilot_qa_add(args: argparse.Namespace) -> int:
+    from . import pilot
+
+    job = queue.get_job(args.job_id)
+    if job is None:
+        print(f"No job {args.job_id}", file=sys.stderr)
+        return 2
+    try:
+        original = json.loads(args.original) if args.original is not None else None
+        corrected = json.loads(args.corrected)
+    except json.JSONDecodeError as err:
+        print(f"Invalid JSON value: {err}", file=sys.stderr)
+        return 2
+    with queue._connect() as conn:  # noqa: SLF001
+        label_id = pilot.add_qa_label(
+            conn, job_id=job.id, media_ref=args.media_ref or job.source,
+            start_sec=args.start, end_sec=args.end, target_type=args.target,
+            original=original, corrected=corrected, note=args.note,
+        )
+    print(json.dumps({"ok": True, "label_id": label_id, "job_id": job.id}))
+    return 0
+
+
 def cmd_edit(args: argparse.Namespace) -> int:
     """Per-clip editing verbs. All output is JSON on stdout for the app."""
     from pathlib import Path
@@ -298,6 +340,23 @@ def main(argv: list[str] | None = None) -> int:
 
     p_jobs = sub.add_parser("jobs", help="list jobs")
     p_jobs.set_defaults(fn=cmd_jobs)
+
+    p_pilot = sub.add_parser("pilot-summary", help="summarize Analyzer pilot jobs")
+    p_pilot.add_argument("job_ids", nargs="*", help="job IDs (default: recent jobs)")
+    p_pilot.add_argument("--limit", type=int, default=50, help="recent-job limit when no IDs are given")
+    p_pilot.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p_pilot.set_defaults(fn=cmd_pilot_summary)
+
+    p_qa = sub.add_parser("pilot-qa-add", help="record a structured pilot QA correction")
+    p_qa.add_argument("job_id")
+    p_qa.add_argument("--start", type=float, required=True)
+    p_qa.add_argument("--end", type=float, required=True)
+    p_qa.add_argument("--target", required=True)
+    p_qa.add_argument("--original", help="original detector value as JSON")
+    p_qa.add_argument("--corrected", required=True, help="human value as JSON")
+    p_qa.add_argument("--note")
+    p_qa.add_argument("--media-ref")
+    p_qa.set_defaults(fn=cmd_pilot_qa_add)
 
     p_edit = sub.add_parser("edit", help="per-clip editing (context / visuals / render)")
     edit_sub = p_edit.add_subparsers(dest="edit_cmd", required=True)

@@ -75,6 +75,9 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(config.db_path(), timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    from .. import pilot
+
+    pilot.ensure_schema(conn)
     return conn
 
 
@@ -274,6 +277,8 @@ def run_stages(job: Job, stages: Iterable[Stage], progress: ProgressFn) -> dict[
     """Run stages in order, skipping fresh checkpoints. Returns stage→data."""
     job.dir.mkdir(parents=True, exist_ok=True)
     settings = config.Settings.from_json(json.loads(job.settings_json))
+    from .. import pilot
+
     ctx = StageContext(job=job, settings=settings, progress=progress)
     results: dict[str, dict] = {}
     set_job_status(job.id, "running")
@@ -281,24 +286,61 @@ def run_stages(job: Job, stages: Iterable[Stage], progress: ProgressFn) -> dict[
         cached = read_checkpoint(job, stage.name, stage.schema_version)
         if cached is not None and stage.artifacts_ok(ctx, cached):
             results[stage.name] = cached
+            with _connect() as conn:
+                existing = conn.execute(
+                    "SELECT runtime_sec FROM pilot_stage_observations WHERE job_id=? AND stage=?",
+                    (job.id, stage.name),
+                ).fetchone()
+                outcome, _ = pilot.infer_outcome(stage.name, cached)
+                pilot.record_stage(
+                    conn, job, stage.name, "done", outcome=outcome,
+                    runtime_sec=existing["runtime_sec"] if existing else None,
+                    settings=settings, data=cached,
+                )
+                pilot.write_manifest(conn, job)
             progress(stage.name, 1.0, "cached")
             continue
         mark_stage(job.id, stage.name, "running", stage.schema_version)
+        started = time.monotonic()
+        with _connect() as conn:
+            pilot.record_stage(conn, job, stage.name, "running", settings=settings)
+            pilot.write_manifest(conn, job)
         progress(stage.name, -1.0, "starting")
         try:
             data = stage.run(_ctx_for(ctx, stage.name, results))
         except StageError as err:
             mark_stage(job.id, stage.name, "failed", stage.schema_version, str(err))
             set_job_status(job.id, "failed", f"{stage.name}: {err}")
+            with _connect() as conn:
+                pilot.record_stage(
+                    conn, job, stage.name, "failed", outcome="failed",
+                    runtime_sec=time.monotonic() - started, error=str(err), settings=settings,
+                )
+                pilot.write_manifest(conn, get_job(job.id) or job)
             raise
         except Exception as err:  # noqa: BLE001 - record then re-raise
             mark_stage(job.id, stage.name, "failed", stage.schema_version, repr(err))
             set_job_status(job.id, "failed", f"{stage.name}: {err!r}")
+            with _connect() as conn:
+                pilot.record_stage(
+                    conn, job, stage.name, "failed", outcome="failed",
+                    runtime_sec=time.monotonic() - started, error=repr(err), settings=settings,
+                )
+                pilot.write_manifest(conn, get_job(job.id) or job)
             raise
         write_checkpoint(job, stage.name, stage.schema_version, data)
+        outcome, _ = pilot.infer_outcome(stage.name, data)
+        with _connect() as conn:
+            pilot.record_stage(
+                conn, job, stage.name, "done", outcome=outcome,
+                runtime_sec=time.monotonic() - started, settings=settings, data=data,
+            )
+            pilot.write_manifest(conn, job)
         results[stage.name] = data
         progress(stage.name, 1.0, "done")
     set_job_status(job.id, "done", None)
+    with _connect() as conn:
+        pilot.write_manifest(conn, get_job(job.id) or job)
     return results
 
 
