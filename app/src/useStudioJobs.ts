@@ -2,12 +2,12 @@ import { useCallback, useRef, useState } from 'react'
 import { api } from './api'
 import type { JobSummary } from './types'
 
-const CACHE_KEY = 'clipizator.studio.rendered-jobs.v1'
+const CACHE_KEY = 'clipizator.studio.projects.v2'
 
 function cachedJobs(): JobSummary[] {
   try {
     const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY) || '[]')
-    return Array.isArray(cached) ? cached.filter(job => job?.rendered && job.clip_count > 0) : []
+    return Array.isArray(cached) ? cached : []
   } catch {
     return []
   }

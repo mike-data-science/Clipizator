@@ -43,6 +43,7 @@ _STAGE_PATTERNS = {
     "diarize": ("diarize.json", "diar_embeddings.npy"),
     "events": ("events.json", "curves.json"),
     "candidates": ("candidates.json", "scenes.json", "interest_curve.json"),
+    "source_analysis": ("source_analysis.json",),
     "score": ("score.json", "manual_prompts.json", "manual_scores.json"),
     "camera": ("camera.json", "trajectory_*.json"),
     "render": ("render.json", "clips/*"),
@@ -131,7 +132,7 @@ def relevant_config(settings: Any, stage: str) -> dict[str, Any]:
     values = settings.to_json() if hasattr(settings, "to_json") else dict(settings or {})
     keys = {
         "asr": ("asr_model",), "events": ("laughter_specialist",),
-        "score": ("llm_mode", "gemini_model", "ollama_model", "ollama_base_url"),
+        "score": ("llm_mode", "gemini_model", "ollama_model", "ollama_base_url", "ollama_num_predict"),
         "camera": ("camera",),
         "render": ("camera", "lufs_target", "true_peak_db", "caption_preset", "caption_color"),
     }.get(stage, ())
@@ -205,6 +206,7 @@ def stage_provenance(stage: str, data: dict[str, Any]) -> dict[str, Any]:
         "ingest": ("yt-dlp",), "asr": ("whisperx", "faster-whisper", "torch"),
         "diarize": ("torch", "scikit-learn", "librosa"),
         "events": ("torch", "librosa", "scipy"), "candidates": ("scenedetect", "numpy"),
+        "source_analysis": ("rapidocr-onnxruntime", "onnxruntime", "opencv-python-headless", "numpy"),
         "score": ("httpx",), "camera": ("onnxruntime", "opencv-python-headless"), "render": (),
     }.get(stage, ())
     models: list[dict[str, Any]] = []
@@ -217,7 +219,16 @@ def stage_provenance(stage: str, data: dict[str, Any]) -> dict[str, Any]:
         if data.get("benchmark", {}).get("laughter_sec") is not None:
             models.append(_model_identity("laughter-jrgillick", "best.pth.tar"))
     elif stage == "score":
-        models.append({"id": data.get("model"), "backend": data.get("llm_mode")})
+        models.append({
+            "id": data.get("model"),
+            "backend": data.get("llm_mode"),
+            "generation": data.get("llm_generation"),
+        })
+    elif stage == "source_analysis":
+        models.extend([
+            {"id": "PP-OCRv3", "backend": "RapidOCR/ONNX Runtime"},
+            _model_identity("ultraface", "ultraface-rfb-320.onnx"),
+        ])
     elif stage == "camera":
         models.extend([_model_identity("ultraface", "ultraface-rfb-320.onnx"), _model_identity("lr-asd", "frontend.onnx"), _model_identity("lr-asd", "backend.onnx")])
     return {

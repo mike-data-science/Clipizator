@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import argparse
+import uuid
 import requests
 from pathlib import Path
 
@@ -16,15 +17,50 @@ from publikclip_pipeline.ingest import ytdlp
 
 DEFAULT_VM_URL = os.environ.get("PUBLIKCLIP_SERVER_URL", "http://4.231.114.220:8000").rstrip("/")
 
+WORKER_ID = f"laptop-{uuid.uuid4().hex[:12]}"
+
+
 def get_jobs(server_url):
     try:
-        resp = requests.get(f"{server_url}/api/worker/jobs", timeout=5)
+        resp = requests.get(f"{server_url}/api/worker/jobs", params={"worker_id": WORKER_ID}, timeout=5)
         if resp.status_code == 200:
             return resp.json().get("jobs", [])
         print(f"Worker queue returned HTTP {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
         print(f"Worker cannot reach {server_url}: {e}")
     return []
+
+
+def report_research_status(job, server_url, status, error=None):
+    queue_item_id = job.get("queue_item_id")
+    claim_token = job.get("claim_token")
+    if not queue_item_id or not claim_token:
+        return
+    try:
+        response = requests.post(
+            f"{server_url}/api/worker/research/{queue_item_id}/status",
+            json={"claim_token": claim_token, "status": status, "error": error},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            print(f"Could not report research status {status}: {response.text[:200]}")
+    except Exception as status_error:
+        print(f"Could not report research status {status}: {status_error}")
+
+
+def report_source_status(job, server_url, status, error=None):
+    job_id = job.get("job_id")
+    if not job_id:
+        return
+    try:
+        response = requests.post(
+            f"{server_url}/api/worker/source/{job_id}/status",
+            json={"status": status, "error": error}, timeout=10,
+        )
+        if response.status_code != 200:
+            print(f"Could not report source status {status}: {response.text[:200]}")
+    except Exception as status_error:
+        print(f"Could not report source status {status}: {status_error}")
 
 def download_and_upload(job, server_url):
     job_type = job.get("type", "clip")
@@ -33,7 +69,8 @@ def download_and_upload(job, server_url):
     job_id = job.get("job_id")
     url = job["url"]
     role = job.get("role", "competitor")
-    item_id = clip_id or job_id
+    queue_item_id = job.get("queue_item_id")
+    item_id = queue_item_id or clip_id or job_id
     
     print(f"\n--- Processing {job_type}: {item_id} for campaign {campaign_id} ---")
     print(f"URL: {url}")
@@ -42,6 +79,10 @@ def download_and_upload(job, server_url):
     meta_path = Path(f"temp_{item_id}.json")
     
     try:
+        if job_type == "research_queue":
+            report_research_status(job, server_url, "downloading")
+        elif job_type == "source":
+            report_source_status(job, server_url, "downloading")
         # 1. Fetch Meta
         print("Fetching metadata...")
         meta = ytdlp.fetch_meta(url, lambda pct, msg: print(f"  {msg}", end="\r"))
@@ -57,15 +98,25 @@ def download_and_upload(job, server_url):
         
         # 3. Upload to VM
         print("Uploading to Azure VM...")
+        if job_type == "research_queue":
+            report_research_status(job, server_url, "uploading")
+        elif job_type == "source":
+            report_source_status(job, server_url, "uploading")
         with open(video_path, "rb") as vf, open(meta_path, "rb") as mf:
             files = {
                 "video": ("video.mkv", vf, "video/x-matroska"),
                 "metadata": ("meta.json", mf, "application/json")
             }
             data = {"role": role}
+            if job_type == "research_queue":
+                data["claim_token"] = job["claim_token"]
+            if job_type == "source" and job.get("resume_pipeline"):
+                data["resume_pipeline"] = "true"
             
             upload_url = (
-                f"{server_url}/api/worker/upload-source/{job_id}"
+                f"{server_url}/api/worker/upload-research/{queue_item_id}"
+                if job_type == "research_queue"
+                else f"{server_url}/api/worker/upload-source/{job_id}"
                 if job_type == "source"
                 else f"{server_url}/api/worker/upload/{campaign_id}/{clip_id}"
             )
@@ -75,9 +126,15 @@ def download_and_upload(job, server_url):
                 print("Successfully uploaded to VM! VM has resumed analysis.")
             else:
                 print(f"Upload failed: {resp.text}")
+                if job_type == "research_queue":
+                    report_research_status(job, server_url, "failed", f"Upload failed with HTTP {resp.status_code}: {resp.text[:500]}")
                 
     except Exception as e:
         print(f"Error processing job: {e}")
+        if job_type == "research_queue":
+            report_research_status(job, server_url, "failed", str(e))
+        elif job_type == "source":
+            report_source_status(job, server_url, "failed", str(e))
         
     finally:
         # 4. Clean up local files to save memory
@@ -106,7 +163,12 @@ def main():
         jobs = get_jobs(args.server_url)
         if jobs:
             for job in jobs:
-                required = ("url", "job_id") if job.get("type") == "source" else ("campaign_id", "clip_id", "url")
+                if job.get("type") == "research_queue":
+                    required = ("url", "job_id", "queue_item_id", "claim_token")
+                elif job.get("type") == "source":
+                    required = ("url", "job_id")
+                else:
+                    required = ("campaign_id", "clip_id", "url")
                 missing = [field for field in required if not job.get(field)]
                 if missing:
                     print(f"Skipping malformed worker job; missing: {', '.join(missing)}")

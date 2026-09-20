@@ -1,7 +1,7 @@
 """LLM backends: Gemini (BYO key, default) and Ollama (local fallback).
 
 One interface: generate_json(prompt, schema, images) → dict, with disk
-caching keyed on (backend, model, prompt, schema) so re-runs never re-spend
+caching keyed on the complete request identity so re-runs never re-spend
 — the M2 gate requires cache hits on identical inputs.
 
 Key resolution: PUBLIKCLIP_GEMINI_API_KEY env var, then
@@ -28,6 +28,7 @@ GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+OLLAMA_NUM_PREDICT = config.DEFAULT_OLLAMA_NUM_PREDICT
 LLM_TIMEOUT = 120.0
 
 
@@ -45,6 +46,9 @@ class AIProvider:
 
     def unload(self) -> None:
         return None
+
+    def generation_metadata(self) -> dict[str, Any]:
+        return {}
 
 
 def gemini_api_key() -> str | None:
@@ -66,13 +70,34 @@ def _cache_dir() -> Path:
     return path
 
 
-def _cache_key(prompt: str, schema: dict, images: list[bytes]) -> str:
-    h = hashlib.sha256()
-    h.update(prompt.encode())
-    h.update(json.dumps(schema, sort_keys=True).encode())
-    for img in images:
-        h.update(hashlib.sha256(img).digest())
-    return h.hexdigest()[:32]
+def _cache_key(
+    *,
+    backend: str,
+    model: str,
+    prompt: str,
+    schema: dict,
+    images: list[bytes],
+    generation_options: dict[str, Any],
+    thinking: bool | str | None,
+) -> str:
+    """Hash every input that can change a provider response.
+
+    Image bytes are represented by full SHA-256 identities so cache metadata
+    stays small.  The version prevents legacy prompt-only keys from being
+    accepted silently after the identity contract changed.
+    """
+    identity = {
+        "version": 2,
+        "backend": backend,
+        "model": model,
+        "prompt": prompt,
+        "schema": schema,
+        "images": [hashlib.sha256(image).hexdigest() for image in images],
+        "generation_options": generation_options,
+        "thinking": thinking,
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()[:32]
 
 
 def _strip_fences(text: str) -> str:
@@ -101,7 +126,20 @@ class GeminiClient(AIProvider):
         self, prompt: str, schema: dict, images: list[bytes] | None = None
     ) -> dict:
         images = images or []
-        cache_file = _cache_dir() / f"{_cache_key(prompt, schema, images)}.json"
+        generation_options = {
+            "responseMimeType": "application/json",
+            "temperature": 0.2,
+        }
+        cache_key = _cache_key(
+            backend=self.backend,
+            model=self.model,
+            prompt=prompt,
+            schema=schema,
+            images=images,
+            generation_options=generation_options,
+            thinking=None,
+        )
+        cache_file = _cache_dir() / f"{cache_key}.json"
         if cache_file.exists():
             return json.loads(cache_file.read_text())
 
@@ -115,9 +153,8 @@ class GeminiClient(AIProvider):
         body = {
             "contents": [{"parts": parts}],
             "generationConfig": {
-                "responseMimeType": "application/json",
+                **generation_options,
                 "responseSchema": schema,
-                "temperature": 0.2,
             },
         }
         last_err: Exception | None = None
@@ -163,11 +200,25 @@ class GeminiClient(AIProvider):
                 last_err = err
         raise LlmError(f"Gemini call failed after retries: {last_err}")
 
+    def generation_metadata(self) -> dict[str, Any]:
+        return {
+            "thinking_enabled": None,
+            "generation_options": {
+                "responseMimeType": "application/json",
+                "temperature": 0.2,
+            },
+        }
+
 
 class OllamaClient(AIProvider):
     backend = "ollama"
 
-    def __init__(self, model: str | None = None, base_url: str | None = None):
+    def __init__(
+        self,
+        model: str | None = None,
+        base_url: str | None = None,
+        num_predict: int = OLLAMA_NUM_PREDICT,
+    ):
         self.base_url = (base_url or os.environ.get("OLLAMA_BASE_URL") or OLLAMA_URL).rstrip("/")
         try:
             res = httpx.get(f"{self.base_url}/api/tags", timeout=5.0)
@@ -181,29 +232,45 @@ class OllamaClient(AIProvider):
             raise LlmError("Ollama has no models. Pull one, e.g. `ollama pull qwen3:8b`.")
         preferred = model or os.environ.get("OLLAMA_MODEL") or OLLAMA_MODEL
         self.model = preferred if preferred in models else _pick_ollama_model(models)
+        if num_predict <= 0:
+            raise LlmError("Ollama generation limit must be greater than zero.")
+        self.num_predict = num_predict
+        self.thinking_enabled = False if self.model.lower().startswith("qwen3") else None
 
     def generate_json(
         self, prompt: str, schema: dict, images: list[bytes] | None = None
     ) -> dict:
+        input_images = images or []
         if images:
             # Text-only fallback: the caller records visual as signals_missing.
             images = []
-        cache_file = _cache_dir() / f"{_cache_key(prompt, schema, [])}.json"
+        generation_options = {
+            "temperature": 0.1,
+            "num_predict": self.num_predict,
+        }
+        cache_key = _cache_key(
+            backend=self.backend,
+            model=self.model,
+            prompt=prompt,
+            schema=schema,
+            images=input_images,
+            generation_options=generation_options,
+            thinking=self.thinking_enabled,
+        )
+        cache_file = _cache_dir() / f"{cache_key}.json"
         if cache_file.exists():
             return json.loads(cache_file.read_text())
-        # Qwen3 defaults to "thinking" mode which wastes time on internal
-        # chain-of-thought we never read. /no_think disables it for ~2× faster
-        # structured-output calls with identical final answers.
-        effective_prompt = prompt
-        if self.model.startswith("qwen3"):
-            effective_prompt = prompt + "\n/no_think"
         body = {
             "model": self.model,
-            "messages": [{"role": "user", "content": effective_prompt}],
+            "messages": [{"role": "user", "content": prompt}],
             "format": schema,
             "stream": False,
-            "options": {"temperature": 0.1},
+            "options": generation_options,
         }
+        if self.thinking_enabled is not None:
+            # Ollama's supported Qwen3 control.  A literal /no_think suffix is
+            # not sufficient to select the non-thinking template reliably.
+            body["think"] = self.thinking_enabled
         try:
             res = httpx.post(f"{self.base_url}/api/chat", json=body, timeout=600.0)
             res.raise_for_status()
@@ -212,6 +279,15 @@ class OllamaClient(AIProvider):
             raise LlmError(f"Ollama call failed: {err}") from err
         cache_file.write_text(json.dumps(data))
         return data
+
+    def generation_metadata(self) -> dict[str, Any]:
+        return {
+            "thinking_enabled": self.thinking_enabled,
+            "generation_options": {
+                "temperature": 0.1,
+                "num_predict": self.num_predict,
+            },
+        }
 
     def unload(self) -> None:
         """Evict the model from VRAM immediately (e.g. to free space for render)."""
@@ -246,11 +322,21 @@ def _pick_ollama_model(models: list[str]) -> str:
     return models[0]
 
 
-def make_client(llm_mode: str, gemini_model: str = GEMINI_MODEL, ollama_model: str | None = None, ollama_base_url: str | None = None):
+def make_client(
+    llm_mode: str,
+    gemini_model: str = GEMINI_MODEL,
+    ollama_model: str | None = None,
+    ollama_base_url: str | None = None,
+    ollama_num_predict: int = OLLAMA_NUM_PREDICT,
+):
     llm_mode = llm_mode or "ollama"
     if llm_mode == "ollama":
         try:
-            return OllamaClient(model=ollama_model, base_url=ollama_base_url)
+            return OllamaClient(
+                model=ollama_model,
+                base_url=ollama_base_url,
+                num_predict=ollama_num_predict,
+            )
         except LlmError:
             if gemini_api_key():
                 return GeminiClient(model=gemini_model)

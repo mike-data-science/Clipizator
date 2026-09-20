@@ -23,6 +23,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+DEFAULT_OLLAMA_NUM_PREDICT = 512
+
+
 def home_dir() -> Path:
     return Path(os.environ.get("PUBLIKCLIP_HOME", str(Path.home() / ".publikclip")))
 
@@ -114,6 +117,9 @@ class Settings:
     gemini_model: str = "gemini-1.5-flash-8b"
     ollama_model: str = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
     ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_num_predict: int = int(
+        os.environ.get("OLLAMA_NUM_PREDICT", str(DEFAULT_OLLAMA_NUM_PREDICT))
+    )
     caption_preset: str = "hormozi"
     caption_color: str = "white"  # 'white', 'yellow', or 'cyan'
     asr_model: str = "small"  # whisper model size
@@ -132,6 +138,7 @@ class Settings:
             "gemini_model": self.gemini_model,
             "ollama_model": self.ollama_model,
             "ollama_base_url": self.ollama_base_url,
+            "ollama_num_predict": self.ollama_num_predict,
             "caption_preset": self.caption_preset,
             "caption_color": self.caption_color,
             "asr_model": self.asr_model,
@@ -149,6 +156,10 @@ class Settings:
             gemini_model=data.get("gemini_model", "gemini-1.5-flash-8b"),
             ollama_model=data.get("ollama_model", os.environ.get("OLLAMA_MODEL", "qwen3:8b")),
             ollama_base_url=data.get("ollama_base_url", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")),
+            ollama_num_predict=int(data.get(
+                "ollama_num_predict",
+                os.environ.get("OLLAMA_NUM_PREDICT", str(DEFAULT_OLLAMA_NUM_PREDICT)),
+            )),
             caption_preset=data.get("caption_preset", "hormozi"),
             caption_color=data.get("caption_color", "white"),
             asr_model=data.get("asr_model", "small"),

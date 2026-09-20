@@ -19,7 +19,7 @@ import json
 import sqlite3
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     status TEXT NOT NULL DEFAULT 'pending',  -- pending|running|done|failed
     error TEXT,
     settings_json TEXT NOT NULL,
-    campaign_dir TEXT
+    campaign_dir TEXT,
+    source_provenance_json TEXT,
+    job_mode TEXT NOT NULL DEFAULT 'clipping'
 );
 CREATE TABLE IF NOT EXISTS stage_runs (
     job_id TEXT NOT NULL,
@@ -61,6 +63,8 @@ class Job:
     error: str | None
     settings_json: str
     campaign_dir: str | None = None
+    source_provenance_json: str | None = None
+    job_mode: str = "clipping"
 
     @property
     def dir(self) -> Path:
@@ -75,6 +79,17 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(config.db_path(), timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    from .. import analysis_runs
+
+    analysis_runs.ensure_schema(conn)
+    from .. import generation_config
+
+    generation_config.ensure_schema(conn)
+    for column in ("campaign_dir TEXT", "source_provenance_json TEXT", "job_mode TEXT NOT NULL DEFAULT 'clipping'"):
+        try:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {column}")
+        except sqlite3.OperationalError:
+            pass
     from .. import pilot
 
     pilot.ensure_schema(conn)
@@ -92,29 +107,47 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         error=row["error"],
         settings_json=row["settings_json"],
         campaign_dir=row["campaign_dir"] if "campaign_dir" in row.keys() else None,
+        source_provenance_json=row["source_provenance_json"] if "source_provenance_json" in row.keys() else None,
+        job_mode=(row["job_mode"] if "job_mode" in row.keys() and row["job_mode"] else "clipping"),
     )
 
 
-def create_job(source_type: str, source: str, settings_json: str, campaign_dir: str | None = None) -> Job:
+def create_job(
+    source_type: str,
+    source: str,
+    settings_json: str,
+    campaign_dir: str | None = None,
+    *,
+    title: str | None = None,
+    source_provenance: dict[str, Any] | None = None,
+    job_mode: str = "clipping",
+    generation_config_payload: dict[str, Any] | None = None,
+) -> Job:
     if source_type not in ("url", "file"):
         raise ValueError(f"bad source_type {source_type!r}")
     job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     with _connect() as conn:
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN campaign_dir TEXT")
-        except sqlite3.OperationalError:
-            pass
-            
         conn.execute(
-            "INSERT INTO jobs (id, created_at, source_type, source, status, settings_json, campaign_dir)"
-            " VALUES (?, ?, ?, ?, 'pending', ?, ?)",
-            (job_id, time.time(), source_type, source, settings_json, campaign_dir),
+            "INSERT INTO jobs (id, created_at, source_type, source, title, status, settings_json, campaign_dir, source_provenance_json, job_mode)"
+            " VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+            (job_id, time.time(), source_type, source, title, settings_json, campaign_dir,
+             json.dumps(source_provenance, ensure_ascii=False) if source_provenance else None, job_mode),
         )
+        from .. import generation_config
+
+        raw_generation_config = generation_config_payload
+        if raw_generation_config is None:
+            raw_generation_config = generation_config.config_from_settings(
+                config.Settings.from_json(json.loads(settings_json))
+            )
+        generation_config.save_project_config(job_id, raw_generation_config, conn=conn)
     job = get_job(job_id)
     assert job is not None
     job.dir.mkdir(parents=True, exist_ok=True)
     # Snapshot settings into the job dir so resume never picks up new defaults.
     _atomic_write_json(job.dir / "settings.json", json.loads(settings_json))
+    if source_provenance:
+        _atomic_write_json(job.dir / "source_provenance.json", source_provenance)
     return job
 
 
@@ -143,6 +176,12 @@ def set_job_status(job_id: str, status: str, error: str | None = None, title: st
             conn.execute(
                 "UPDATE jobs SET status = ?, error = ? WHERE id = ?", (status, error, job_id)
             )
+
+
+def set_job_mode(job_id: str, job_mode: str) -> None:
+    """Persist explicit pipeline intent for existing jobs during safe migrations/retry."""
+    with _connect() as conn:
+        conn.execute("UPDATE jobs SET job_mode = ? WHERE id = ?", (job_mode, job_id))
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +285,8 @@ class StageContext:
     job: Job
     settings: "config.Settings"
     progress: ProgressFn
+    generation_config: dict[str, Any] = field(default_factory=dict)
+    generation_config_run_id: str | None = None
 
     @property
     def job_dir(self) -> Path:
@@ -277,9 +318,15 @@ def run_stages(job: Job, stages: Iterable[Stage], progress: ProgressFn) -> dict[
     """Run stages in order, skipping fresh checkpoints. Returns stage→data."""
     job.dir.mkdir(parents=True, exist_ok=True)
     settings = config.Settings.from_json(json.loads(job.settings_json))
-    from .. import pilot
+    from .. import generation_config, pilot
 
-    ctx = StageContext(job=job, settings=settings, progress=progress)
+    generation_run = generation_config.snapshot_run(job.id)
+    settings = generation_config.apply_to_settings(settings, generation_run["resolved_config"])
+    ctx = StageContext(
+        job=job, settings=settings, progress=progress,
+        generation_config=generation_run["resolved_config"],
+        generation_config_run_id=generation_run["run_id"],
+    )
     results: dict[str, dict] = {}
     set_job_status(job.id, "running")
     for stage in stages:
@@ -358,6 +405,8 @@ def _ctx_for(ctx: StageContext, stage_name: str, prior: dict[str, dict]) -> _Sta
         job=ctx.job,
         settings=ctx.settings,
         progress=ctx.progress,
+        generation_config=ctx.generation_config,
+        generation_config_run_id=ctx.generation_config_run_id,
         stage_name=stage_name,
         prior=prior,
     )

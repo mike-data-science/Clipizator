@@ -37,6 +37,27 @@ CLASS_MAP: dict[str, str] = {
     "Clapping": "applause",
 }
 
+# Extra AudioSet evidence retained only for Video DNA audio intelligence.
+# These labels never enter the legacy shared event bus, so existing clipping
+# behavior remains unchanged.
+INTELLIGENCE_CLASS_MAP: dict[str, str] = {
+    "Music": "music",
+    "Background music": "music",
+    "Whoosh, swoosh, swish": "sfx:whoosh",
+    "Thump, thud": "sfx:impact/hit",
+    "Bang": "sfx:impact/hit",
+    "Slam": "sfx:impact/hit",
+    "Clicking": "sfx:click/shutter",
+    "Camera": "sfx:click/shutter",
+    "Beep, bleep": "sfx:beep/notification",
+    "Ding": "sfx:beep/notification",
+    "Ding-dong": "sfx:beep/notification",
+    "Engine": "sfx:engine/mechanical",
+    "Engine knocking": "sfx:engine/mechanical",
+    "Engine starting": "sfx:engine/mechanical",
+    "Crowd": "sfx:crowd",
+}
+
 CHUNK_SEC = 30.0
 OVERLAP_SEC = 1.0
 
@@ -54,18 +75,28 @@ THRESHOLDS: dict[str, tuple[float, float]] = {
     "applause": (0.15, 0.08),
     "cheer": (0.15, 0.08),
 }
+INTELLIGENCE_THRESHOLDS: dict[str, tuple[float, float]] = {
+    "music": (0.18, 0.10),
+    "sfx:whoosh": (0.20, 0.10),
+    "sfx:impact/hit": (0.20, 0.10),
+    "sfx:click/shutter": (0.22, 0.12),
+    "sfx:beep/notification": (0.20, 0.10),
+    "sfx:engine/mechanical": (0.20, 0.10),
+    "sfx:crowd": (0.20, 0.10),
+}
 CONF_SCALE = 0.30
 
 
-def load_class_indices() -> dict[int, str]:
+def load_class_indices(class_map: dict[str, str] | None = None) -> dict[int, str]:
     """AudioSet index → bus event type, for the classes we track."""
+    class_map = class_map or CLASS_MAP
     csv_path = Path(__file__).parent.parent / "vendor" / "panns" / "class_labels_indices.csv"
     mapping: dict[int, str] = {}
     with open(csv_path) as fh:
         for row in csv.DictReader(fh):
             name = row["display_name"].strip('"')
-            if name in CLASS_MAP:
-                mapping[int(row["index"])] = CLASS_MAP[name]
+            if name in class_map:
+                mapping[int(row["index"])] = class_map[name]
     return mapping
 
 
@@ -74,10 +105,11 @@ def framewise_probs(
     y32k: np.ndarray,
     device: torch.device,
     progress=None,
+    class_map: dict[str, str] | None = None,
 ) -> tuple[dict[str, np.ndarray], float]:
     """Per-event-type framewise posteriors on the model's 100 fps grid.
     Same-type classes collapse via max (a giggle IS a laugh)."""
-    class_idx = load_class_indices()
+    class_idx = load_class_indices(class_map)
     types = sorted(set(class_idx.values()))
     sr = panns_models.SAMPLE_RATE
     fps = panns_models.FRAMES_PER_SEC

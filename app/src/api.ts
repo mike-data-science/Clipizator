@@ -1,4 +1,4 @@
-import type { JobResults, JobSummary, LoopOverview, SetupState, SyncSummary, Campaign, CampaignFull, CampaignVideo, CampaignClip, CampaignMoment, AnalyzerVideoSummary, AnalyzerVideoDetail, CreatorPerformanceLabel, CreatorSelectionReason, CreatorSource, CreatorSourceDetail, CreatorSourceVideo, QueueSelectedResult, ResearchQueueItem } from './types'
+import type { JobResults, JobSummary, ProjectLifecycle, LoopOverview, SetupState, SyncSummary, Campaign, CampaignFull, CampaignVideo, CampaignClip, CampaignMoment, AnalyzerVideoSummary, AnalyzerVideoDetail, CreatorPerformanceLabel, CreatorSelectionReason, CreatorSource, CreatorSourceDetail, CreatorSourceVideo, QueueSelectedResult, ResearchQueueItem, EditStyleProfile, GenerationConfig } from './types'
 
 const API = '/api'
 
@@ -95,13 +95,14 @@ function fileUrl(absolutePath: string): string {
 /* ---- API object ---- */
 
 export const api = {
-  uploadVideo: async (file: File, llm: string, gemini_model: string, captions: string, asr_model: string) => {
+  uploadVideo: async (file: File, llm: string, gemini_model: string, captions: string, asr_model: string, generation_config?: GenerationConfig) => {
     const formData = new FormData()
     formData.append('video', file)
     formData.append('llm', llm)
     formData.append('gemini_model', gemini_model)
     formData.append('captions', captions)
     formData.append('asr_model', asr_model)
+    if (generation_config) formData.append('generation_config', JSON.stringify(generation_config))
     const res = await fetch(`${API}/jobs/upload`, {
       method: 'POST',
       body: formData,
@@ -109,11 +110,17 @@ export const api = {
     if (!res.ok) throw new Error(await res.text())
     return res.json()
   },
-  runJob: (source: string, llm: string, gemini_model: string, captions: string, asr_model: string, caption_color?: string) =>
-    post<{ ok: boolean; job_id: string }>('/jobs', { source, llm, gemini_model, captions, asr_model, caption_color }),
+  runJob: (source: string, llm: string, gemini_model: string, captions: string, asr_model: string, caption_color?: string, generation_config?: GenerationConfig) =>
+    post<{ ok: boolean; job_id: string }>('/jobs', { source, llm, gemini_model, captions, asr_model, caption_color, generation_config }),
+  listStyleProfiles: () => get<{ profiles: EditStyleProfile[] }>('/style-profiles'),
+  getStyleProfile: (profileId: string) => get<EditStyleProfile>(`/style-profiles/${encodeURIComponent(profileId)}`),
+  getGenerationConfig: (jobId: string) => get<{ job_id: string; config: GenerationConfig; resolved_config: GenerationConfig }>(`/jobs/${encodeURIComponent(jobId)}/generation-config`),
+  saveGenerationConfig: (jobId: string, config: GenerationConfig) => put(`/jobs/${encodeURIComponent(jobId)}/generation-config`, config),
+  previewGenerationConfig: (jobId: string, config?: GenerationConfig) => post<{ resolved_config: GenerationConfig }>(`/jobs/${encodeURIComponent(jobId)}/generation-config/preview`, config),
   resumeJob: (jobId: string, llm?: string, gemini_model?: string, captions?: string, camera?: string, asr_model?: string) =>
     post<void>(`/jobs/${jobId}/resume`, { llm, gemini_model, captions, camera, asr_model }),
   jobResults: (jobId: string) => get<JobResults>(`/jobs/${jobId}/results`),
+  jobLifecycle: (jobId: string) => get<ProjectLifecycle>(`/jobs/${encodeURIComponent(jobId)}/lifecycle`),
   listJobs: () => get<JobSummary[]>('/jobs'),
   previewUrl: (jobId: string, clipIndex: number, revision = 0) =>
     `${API}/jobs/${encodeURIComponent(jobId)}/clips/${clipIndex}/preview?v=${revision}`,
@@ -238,8 +245,11 @@ export const api = {
   searchHashtag: (campaignId: string, hashtag: string) =>
     post<{ ok: boolean, message: string }>(`/campaigns/${campaignId}/hashtag-search`, { hashtag }),
 
-  deleteJob: (jobId: string) =>
-    fetch(`/api/jobs/${jobId}`, { method: 'DELETE' }).then(r => r.json()),
+  deleteJob: async (jobId: string) => {
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' })
+    if (!response.ok) throw new Error(await response.text())
+    return response.json()
+  },
 
   fileUrl,
 }

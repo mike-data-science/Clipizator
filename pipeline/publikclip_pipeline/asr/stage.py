@@ -44,15 +44,22 @@ class _ProgressStdWrapper:
         self.original_stream = original_stream
         self.ctx = ctx
         self.last_pct = -1
+        self._emitting = False
 
     def write(self, s):
         self.original_stream.write(s)
+        if self._emitting:
+            return
         match = re.search(r'(\d+(?:\.\d+)?)%', s)
         if match:
             pct = int(float(match.group(1)))
             if pct != self.last_pct:
-                self.ctx.emit(pct / 100.0, f"Transcribing ({pct}%)…")
                 self.last_pct = pct
+                self._emitting = True
+                try:
+                    self.ctx.emit(pct / 100.0, f"Transcribing ({pct}%)…")
+                finally:
+                    self._emitting = False
 
     def flush(self):
         self.original_stream.flush()

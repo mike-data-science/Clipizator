@@ -9,11 +9,14 @@ Replaces the Tauri/Rust shell with a FastAPI server that:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,6 +51,11 @@ except ImportError:
 from publikclip_pipeline import config  # noqa: E402
 # Force reload to pick up ytdlp.py changes
 from publikclip_pipeline.jobs import queue  # noqa: E402
+from publikclip_pipeline import creator_sources, generation_config, research_queue  # noqa: E402
+try:  # Supports both `uvicorn backend.server:app` and running inside backend/.
+    from backend.analyzer_views import analyzer_detail, analyzer_summary  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - deployment entrypoint variant
+    from analyzer_views import analyzer_detail, analyzer_summary  # type: ignore[no-redef]  # noqa: E402
 
 # ---- app setup -------------------------------------------------------------
 app = FastAPI(title="publikclip", version="0.1.0")
@@ -61,6 +69,12 @@ app.add_middleware(
 
 # ---- Worker Queue -----------------------------------------------------------
 WORKER_QUEUE = []  # In-memory queue for laptop download worker
+
+
+def _requires_laptop_download(source: str) -> bool:
+    """Keep YouTube downloads off the VM, where its IP is challenged."""
+    host = (urlparse(source).hostname or "").lower()
+    return host in {"youtu.be", "youtube.com", "youtube-nocookie.com"} or host.endswith((".youtube.com", ".youtube-nocookie.com"))
 
 
 # ---- WebSocket hub for pipeline events ------------------------------------
@@ -101,6 +115,8 @@ _loop: asyncio.AbstractEventLoop  # set in startup
 async def _capture_loop() -> None:
     global _loop
     _loop = asyncio.get_running_loop()
+    research_queue.recover_interrupted_analyses()
+    _start_next_research_analysis()
 
 
 @app.websocket("/ws")
@@ -184,7 +200,7 @@ def _home() -> Path:
 
 
 def _stages():
-    """Lazy-load the pipeline stages (avoids paying the torch import tax at startup)."""
+    """Normal clipping plan; existing jobs retain candidate/edit behavior."""
     from publikclip_pipeline.asr.stage import AsrStage
     from publikclip_pipeline.camera.stage import CameraStage
     from publikclip_pipeline.candidates.stage import CandidatesStage
@@ -193,17 +209,36 @@ def _stages():
     from publikclip_pipeline.ingest.stage import IngestStage
     from publikclip_pipeline.render.stage import RenderStage
     from publikclip_pipeline.scoring.stage import ScoreStage
+    from publikclip_pipeline.source_analysis.stage import SourceAnalysisStage
+    from publikclip_pipeline.semantic_compression_stage import SemanticCompressionStage
 
     return [
         IngestStage(),
         AsrStage(),
         DiarizeStage(),
         EventsStage(),
+        SourceAnalysisStage(),
         CandidatesStage(),
+        SemanticCompressionStage(),
         ScoreStage(),
         CameraStage(),
         RenderStage(),
     ]
+
+
+def _research_stages():
+    """Whole-source Video DNA plan; candidate scoring and generated edits are out of scope."""
+    from publikclip_pipeline.asr.stage import AsrStage
+    from publikclip_pipeline.diarize.stage import DiarizeStage
+    from publikclip_pipeline.events.stage import EventsStage
+    from publikclip_pipeline.ingest.stage import IngestStage
+    from publikclip_pipeline.source_analysis.stage import SourceAnalysisStage
+
+    return [IngestStage(), AsrStage(), DiarizeStage(), EventsStage(), SourceAnalysisStage()]
+
+
+def _stages_for_job(job: queue.Job):
+    return _research_stages() if job.job_mode == "research" else _stages()
 
 
 def _read_stage(job_dir: Path, name: str):
@@ -300,11 +335,20 @@ def check_ollama():
 
 @app.get("/api/jobs")
 def list_jobs():
-    from studio_jobs import list_rendered_jobs
+    try:
+        from backend.studio_jobs import duplicate_groups, list_project_jobs
+    except ModuleNotFoundError:
+        # Supports the existing direct `server:app` launch from backend/.
+        from studio_jobs import duplicate_groups, list_project_jobs
 
     # One local database read; no network metadata lookups or per-job migrations.
     with queue._connect() as conn:
         jobs = [queue._row_to_job(row) for row in conn.execute("SELECT * FROM jobs").fetchall()]
+        stage_runs_by_job = {}
+        for row in conn.execute(
+            "SELECT job_id, stage, status, started_at FROM stage_runs ORDER BY started_at DESC"
+        ).fetchall():
+            stage_runs_by_job.setdefault(row["job_id"], []).append(dict(row))
         titles = {}
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='campaign_videos'").fetchone():
             titles = {
@@ -312,13 +356,16 @@ def list_jobs():
                     "SELECT job_id, title FROM campaign_videos WHERE job_id IS NOT NULL AND title IS NOT NULL ORDER BY added_at"
                 ).fetchall()
             }
-    summaries = list_rendered_jobs(jobs, titles)
+    summaries = list_project_jobs(jobs, titles, stage_runs_by_job)
     jobs_by_id = {job.id: job for job in jobs}
+    duplicate_info = duplicate_groups(jobs, {summary["id"]: summary for summary in summaries})
 
     for summary in summaries:
         job = jobs_by_id.get(summary["id"])
         if not job:
             continue
+        if duplicate := duplicate_info.get(job.id):
+            summary["duplicate"] = duplicate
         media_candidates = [job.dir / "media.info.json", *job.dir.glob("media*.info.json"), job.dir / "media.json"]
         media_path = next((path for path in media_candidates if path.exists()), None)
         ingest_title = None
@@ -347,7 +394,7 @@ def list_jobs():
                     if isinstance(candidate, dict) and candidate.get("url"):
                         thumbnail = candidate["url"]
                         break
-            if thumbnail:
+            if thumbnail and not summary.get("thumbnail_url"):
                 thumbnail_path = Path(str(thumbnail).replace("\\", "/"))
                 resolved_thumbnail = thumbnail_path if thumbnail_path.is_file() else job.dir / thumbnail_path.name
                 if resolved_thumbnail.is_file():
@@ -366,9 +413,25 @@ def list_jobs():
 def delete_job(job_id: str):
     import shutil
     job = queue.get_job(job_id)
-    if job and job.dir.exists():
-        shutil.rmtree(job.dir, ignore_errors=True)
-    return {"status": "ok"}
+    if not job:
+        raise HTTPException(404, "project not found")
+    if getattr(job, "job_mode", "clipping") == "research":
+        raise HTTPException(409, "research jobs cannot be deleted from Projects")
+    if getattr(job, "status", "pending") in {"waiting_for_worker", "downloading", "uploading", "running"}:
+        raise HTTPException(409, "active projects cannot be deleted")
+    jobs_root = config.jobs_dir().resolve()
+    job_dir = job.dir.resolve()
+    try:
+        job_dir.relative_to(jobs_root)
+    except ValueError as err:
+        raise HTTPException(400, "refusing to delete a path outside the jobs directory") from err
+    if job_dir.exists():
+        shutil.rmtree(job_dir)
+    with queue._connect() as conn:
+        for table in ("stage_runs", "generation_configs", "generation_config_runs", "analysis_runs", "pilot_stage_observations", "pilot_qa_labels"):
+            conn.execute(f"DELETE FROM {table} WHERE job_id=?", (job_id,))
+        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+    return {"ok": True, "job_id": job_id}
 
 
 @app.get("/api/jobs/{job_id}/results")
@@ -389,8 +452,272 @@ def job_results(job_id: str):
     }
 
 
-def _run_pipeline_thread(job: queue.Job, stages_to_run: list | None = None, source: str = "studio") -> None:
+@app.get("/api/jobs/{job_id}/lifecycle")
+def job_lifecycle(job_id: str):
+    """Return the existing job/stage bookkeeping for lifecycle detail UI."""
+    try:
+        from backend.studio_jobs import list_project_jobs
+    except ModuleNotFoundError:
+        from studio_jobs import list_project_jobs
+    job = queue.get_job(job_id)
+    if not job or getattr(job, "job_mode", "clipping") == "research":
+        raise HTTPException(404, "normal project not found")
+    with queue._connect() as conn:
+        rows = [dict(row) for row in conn.execute(
+            "SELECT stage, status, started_at, finished_at, error FROM stage_runs WHERE job_id=? ORDER BY started_at",
+            (job_id,),
+        ).fetchall()]
+    summary = list_project_jobs([job], stage_runs_by_job={job_id: rows})[0]
+    by_stage = {row["stage"]: row for row in rows}
+    stages = [("ingest", "Ingest"), ("asr", "ASR / Transcription"), ("diarize", "Diarization"),
+              ("events", "Audio / Events"), ("candidates", "Finding moments"), ("score", "Scoring"),
+              ("camera", "Camera / Editing"), ("render", "Render")]
+    if summary["status"] in {"waiting_for_worker", "downloading", "uploading"}:
+        source_state = "active"
+        source_label = {
+            "waiting_for_worker": "Waiting for local downloader",
+            "downloading": "Downloading",
+            "uploading": "Uploading source",
+        }[summary["status"]]
+    else:
+        source_state = "completed" if summary["ingested"] else "waiting"
+        source_label = "Source"
+    detail_stages = [{"id": "source", "label": source_label, "state": source_state, "progress": None, "message": source_label}]
+    for stage_id, label in stages:
+        row = by_stage.get(stage_id)
+        checkpointed = (job.dir / f"{stage_id}.json").is_file()
+        state = "waiting"
+        if row and row["status"] == "failed":
+            state = "failed"
+        elif row and row["status"] == "running":
+            state = "active"
+        elif (row and row["status"] == "done") or checkpointed:
+            state = "completed"
+        runtime = None
+        if row and row.get("started_at") is not None:
+            end = row.get("finished_at") or time.time()
+            runtime = max(0, end - row["started_at"])
+        detail_stages.append({
+            "id": stage_id, "label": label, "state": state,
+            "progress": None, "message": row.get("error") if row and row.get("error") else None,
+            "runtime_sec": runtime, "error": row.get("error") if row else None,
+        })
+    return {
+        "job_id": job_id,
+        "title": summary["title"],
+        "source": summary["source"],
+        "thumbnail_url": summary.get("thumbnail_url"),
+        "status": summary["status"],
+        "current_stage": summary["current_stage"],
+        "progress": summary["stage_progress"],
+        "clip_count": summary["clip_count"],
+        "rendered": summary["rendered"],
+        "error": summary.get("error"),
+        "stages": detail_stages,
+    }
+
+
+@app.get("/api/analyzer/videos")
+def analyzer_videos():
+    """List completed short-form jobs backed by persisted Analyzer artifacts."""
+    summaries = [analyzer_summary(job) for job in queue.list_jobs(limit=500)]
+    return [item for item in summaries if item is not None]
+
+
+@app.get("/api/analyzer/videos/{job_id}")
+def analyzer_video_detail(job_id: str):
+    """Normalize one job's checkpoints for the read-only Analyzer UI."""
+    job = queue.get_job(job_id)
+    if not job or not job.dir.exists():
+        raise HTTPException(404, f"no job dir for {job_id}")
+    with queue._connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM pilot_qa_labels WHERE job_id=? ORDER BY start_sec, created_at",
+            (job_id,),
+        ).fetchall()
+    detail = analyzer_detail(job, rows)
+    if detail is None:
+        raise HTTPException(404, f"job {job_id} has no completed short-form analysis")
+    return detail
+
+
+class CreatorSourceRequest(BaseModel):
+    source: str
+
+
+class CreatorPerformanceRequest(BaseModel):
+    label: str | None = None
+
+
+class CreatorReferencesRequest(BaseModel):
+    reference: bool | None = None
+    editing_reference: bool | None = None
+
+
+class CreatorSelectionRequest(BaseModel):
+    video_ids: list[int]
+    selected: bool
+    reason: str | None = None
+
+
+class ResearchWorkerStatusRequest(BaseModel):
+    claim_token: str
+    status: str
+    error: str | None = None
+
+
+class SourceWorkerStatusRequest(BaseModel):
+    status: str
+    error: str | None = None
+
+
+@app.get("/api/analyzer/sources")
+def analyzer_creator_sources():
+    """List persisted YouTube creator research sources; no downloads or jobs."""
+    return creator_sources.list_creators()
+
+
+@app.post("/api/analyzer/sources")
+def add_analyzer_creator_source(body: CreatorSourceRequest):
+    """Fetch a creator's flat YouTube catalog and upsert its metadata."""
+    try:
+        return creator_sources.refresh_creator(body.source)
+    except creator_sources.CreatorSourceError as err:
+        raise HTTPException(400, str(err)) from err
+
+
+@app.post("/api/analyzer/sources/{creator_id}/refresh")
+def refresh_analyzer_creator_source(creator_id: int):
+    existing = creator_sources.creator_detail(creator_id)
+    if not existing:
+        raise HTTPException(404, "creator source not found")
+    try:
+        return creator_sources.refresh_creator(existing["canonical_channel_url"])
+    except creator_sources.CreatorSourceError as err:
+        raise HTTPException(400, str(err)) from err
+
+
+@app.get("/api/analyzer/sources/{creator_id}")
+def analyzer_creator_source_detail(creator_id: int):
+    detail = creator_sources.creator_detail(creator_id)
+    if not detail:
+        raise HTTPException(404, "creator source not found")
+    return detail
+
+
+@app.put("/api/analyzer/source-videos/{video_id}/performance")
+def update_creator_video_performance(video_id: int, body: CreatorPerformanceRequest):
+    if body.label not in creator_sources.LABELS and body.label is not None:
+        raise HTTPException(400, "label must be strong, average, weak, unclassified, or null")
+    video = creator_sources.set_manual_label(video_id, body.label)
+    if not video:
+        raise HTTPException(404, "creator video not found")
+    return video
+
+
+@app.put("/api/analyzer/source-videos/{video_id}/references")
+def update_creator_video_references(video_id: int, body: CreatorReferencesRequest):
+    if body.reference is None and body.editing_reference is None:
+        raise HTTPException(400, "provide reference and/or editing_reference")
+    video = creator_sources.set_references(video_id, body.reference, body.editing_reference)
+    if not video:
+        raise HTTPException(404, "creator video not found")
+    return video
+
+
+@app.put("/api/analyzer/sources/{creator_id}/selection")
+def update_creator_video_selection(creator_id: int, body: CreatorSelectionRequest):
+    if body.selected and body.reason not in creator_sources.SELECTION_REASONS:
+        raise HTTPException(400, "a valid selection reason is required")
+    try:
+        detail = creator_sources.set_selection(creator_id, body.video_ids, body.selected, body.reason)
+    except creator_sources.CreatorSourceError as err:
+        raise HTTPException(400, str(err)) from err
+    if not detail:
+        raise HTTPException(404, "creator source not found")
+    return detail
+
+
+@app.post("/api/analyzer/sources/{creator_id}/selection/clear")
+def clear_creator_video_selection(creator_id: int):
+    detail = creator_sources.clear_selection(creator_id)
+    if not detail:
+        raise HTTPException(404, "creator source not found")
+    return detail
+
+
+@app.post("/api/analyzer/sources/{creator_id}/selection/auto")
+def auto_select_creator_video_sample(creator_id: int):
+    detail = creator_sources.auto_select_sample(creator_id)
+    if not detail:
+        raise HTTPException(404, "creator source not found")
+    return detail
+
+
+@app.post("/api/analyzer/sources/{creator_id}/research-queue")
+def queue_selected_creator_videos(creator_id: int):
+    try:
+        return research_queue.queue_selected(creator_id)
+    except research_queue.ResearchQueueError as err:
+        raise HTTPException(404, str(err)) from err
+
+
+@app.get("/api/analyzer/research-queue")
+def analyzer_research_queue():
+    return research_queue.list_items()
+
+
+@app.post("/api/analyzer/research-queue/{item_id}/retry")
+def retry_analyzer_research_queue_item(item_id: int):
+    try:
+        item = research_queue.retry(item_id)
+    except research_queue.ResearchQueueError as err:
+        raise HTTPException(400, str(err)) from err
+    if not item:
+        raise HTTPException(404, "research queue item not found")
+    if item["status"] == "waiting_for_analysis":
+        _start_next_research_analysis()
+    return item
+
+
+def _start_next_research_analysis() -> dict | None:
+    """Start one durable research claim, leaving all other uploads waiting."""
+    while claim := research_queue.claim_next_analysis(os.getpid()):
+        item_id = claim["queue_item_id"]
+        token = claim["analysis_token"]
+        job = queue.get_job(claim["job_id"])
+        if not job:
+            research_queue.mark_failed(item_id, "Linked pipeline job was not found.", token)
+            continue
+        media = job.dir / "media.mkv"
+        if not media.exists():
+            research_queue.mark_failed(item_id, "Uploaded source media was not found.", token)
+            continue
+        threading.Thread(
+            target=_run_pipeline_thread,
+            args=(job, _research_stages()),
+            kwargs={
+                "source": "research_queue", "research_queue_item_id": item_id,
+                "research_analysis_token": token,
+            },
+            daemon=True,
+        ).start()
+        return claim
+    return None
+
+
+def _run_pipeline_thread(
+    job: queue.Job,
+    stages_to_run: list | None = None,
+    source: str = "studio",
+    research_queue_item_id: int | None = None,
+    research_analysis_token: str | None = None,
+) -> None:
     """Run the pipeline in a background thread, broadcasting progress via WS."""
+    from publikclip_pipeline import analysis_runs
+
+    analysis_run = None
+
     def emit(stage: str, fraction: float, message: str) -> None:
         _broadcast_sync({
             "event": "progress",
@@ -403,8 +730,22 @@ def _run_pipeline_thread(job: queue.Job, stages_to_run: list | None = None, sour
 
     _broadcast_sync({"event": "job", "job_id": job.id, "dir": str(job.dir), "source": source})
     try:
-        results = queue.run_stages(job, stages_to_run or _stages(), emit)
-        
+        analysis_run = analysis_runs.create_analysis_run(job)
+        if research_queue_item_id is not None and research_analysis_token is None:
+            research_queue.mark_analyzing(research_queue_item_id)
+        results = queue.run_stages(job, stages_to_run or _stages_for_job(job), emit)
+
+        completed_job = queue.get_job(job.id) or job
+        completed_detail = analyzer_detail(completed_job)
+        if completed_detail is not None:
+            analysis_runs.complete_analysis_run(
+                completed_job, analysis_run["analysis_run_id"], completed_detail["video_dna"]
+            )
+        else:
+            analysis_runs.mark_analysis_run_unavailable(
+                analysis_run["analysis_run_id"], "Job is outside the current Analyzer detail scope."
+            )
+
         # Save transcript to DB if ASR ran
         if "asr" in results and "ingest" in results:
             try:
@@ -430,13 +771,28 @@ def _run_pipeline_thread(job: queue.Job, stages_to_run: list | None = None, sour
             "source": source,
         }
         _broadcast_sync(summary)
+        if research_queue_item_id is not None:
+            if research_analysis_token is None:
+                research_queue.mark_completed(research_queue_item_id)
+            else:
+                research_queue.mark_completed(research_queue_item_id, research_analysis_token)
     except Exception as err:
+        if analysis_run is not None:
+            analysis_runs.fail_analysis_run(analysis_run["analysis_run_id"], str(err))
+        if research_queue_item_id is not None:
+            if research_analysis_token is None:
+                research_queue.mark_failed(research_queue_item_id, str(err))
+            else:
+                research_queue.mark_failed(research_queue_item_id, str(err), research_analysis_token)
         _broadcast_sync({
             "event": "result",
             "ok": False,
             "job_id": job.id,
             "error": str(err),
         })
+    finally:
+        if research_analysis_token is not None:
+            _start_next_research_analysis()
 
 
 @app.post("/api/jobs")
@@ -463,7 +819,36 @@ async def run_job(body: dict):
     if asr_model:
         settings.asr_model = asr_model
 
-    job = queue.create_job(source_type, source, json.dumps(settings.to_json()))
+    generation_payload = body.get("generation_config")
+    if generation_payload is not None:
+        try:
+            generation_payload = generation_config.merge_config_overrides(
+                generation_config.config_from_settings(settings), generation_payload
+            )
+        except ValueError as err:
+            raise HTTPException(400, str(err)) from err
+    job = queue.create_job(
+        source_type, source, json.dumps(settings.to_json()),
+        generation_config_payload=generation_payload,
+    )
+
+    if source_type == "url" and _requires_laptop_download(source):
+        queue.set_job_status(job.id, "waiting_for_worker")
+        WORKER_QUEUE.append({
+            "type": "source",
+            "job_id": job.id,
+            "url": source,
+            "role": "source",
+            "resume_pipeline": True,
+        })
+        _broadcast_sync({
+            "event": "job", "job_id": job.id, "dir": str(job.dir), "source": "worker",
+        })
+        _broadcast_sync({
+            "event": "progress", "job_id": job.id, "stage": "worker_queued",
+            "fraction": -1, "message": "Waiting for local downloader", "source": "worker",
+        })
+        return {"ok": True, "job_id": job.id, "status": "waiting_for_worker"}
     
     # Run the full pipeline in Studio. Diarization requires both ingest + asr outputs.
     threading.Thread(target=_run_pipeline_thread, args=(job, _stages()), daemon=True).start()
@@ -472,6 +857,69 @@ async def run_job(body: dict):
     # Do NOT block in a wait loop — if the pipeline thread crashes, this
     # would hang forever and freeze the entire backend.
     return {"ok": True, "job_id": job.id}
+
+
+# -- Generation configuration --
+
+@app.get("/api/style-profiles")
+def list_style_profiles():
+    return {"profiles": generation_config.list_profiles()}
+
+
+@app.get("/api/style-profiles/{profile_id}")
+def get_style_profile(profile_id: str):
+    profile = generation_config.get_profile(profile_id)
+    if profile is None:
+        raise HTTPException(404, "style profile not found")
+    return profile
+
+
+@app.post("/api/style-profiles", status_code=201)
+def create_style_profile(body: dict):
+    try:
+        return generation_config.save_profile(body)
+    except ValueError as err:
+        raise HTTPException(400, str(err)) from err
+
+
+@app.put("/api/style-profiles/{profile_id}")
+def update_style_profile(profile_id: str, body: dict):
+    if generation_config.get_profile(profile_id) is None:
+        raise HTTPException(404, "style profile not found")
+    try:
+        return generation_config.save_profile(body, profile_id=profile_id)
+    except ValueError as err:
+        raise HTTPException(400, str(err)) from err
+
+
+@app.get("/api/jobs/{job_id}/generation-config")
+def get_job_generation_config(job_id: str):
+    try:
+        return generation_config.get_project_config(job_id)
+    except KeyError:
+        raise HTTPException(404, "job not found") from None
+
+
+@app.put("/api/jobs/{job_id}/generation-config")
+def save_job_generation_config(job_id: str, body: dict):
+    payload = body.get("config", body)
+    try:
+        return generation_config.save_project_config(job_id, payload)
+    except KeyError:
+        raise HTTPException(404, "job not found") from None
+    except ValueError as err:
+        raise HTTPException(400, str(err)) from err
+
+
+@app.post("/api/jobs/{job_id}/generation-config/preview")
+def preview_job_generation_config(job_id: str, body: dict | None = None):
+    payload = None if body is None else body.get("config", body)
+    try:
+        return generation_config.preview_project_config(job_id, payload)
+    except KeyError:
+        raise HTTPException(404, "job not found") from None
+    except ValueError as err:
+        raise HTTPException(400, str(err)) from err
 
 
 # -- Queue --
@@ -624,6 +1072,7 @@ async def upload_and_run(
     gemini_model: str | None = None,
     captions: str = "hormozi",
     asr_model: str | None = None,
+    generation_config_payload: str | None = Form(None, alias="generation_config"),
 ):
     """Accept a video file upload, save to a temp location, and start a job."""
     config.ensure_home()
@@ -650,7 +1099,21 @@ async def upload_and_run(
         if c:
             campaign_dir = store.get_campaign_dir(c["id"])
 
-    job = queue.create_job("file", str(dest), json.dumps(settings.to_json()), campaign_dir=campaign_dir)
+    generation_payload = None
+    if generation_config_payload:
+        try:
+            generation_payload = generation_config.merge_config_overrides(
+                generation_config.config_from_settings(settings),
+                json.loads(generation_config_payload),
+            )
+        except json.JSONDecodeError as err:
+            raise HTTPException(400, "generation_config must be valid JSON") from err
+        except ValueError as err:
+            raise HTTPException(400, str(err)) from err
+    job = queue.create_job(
+        "file", str(dest), json.dumps(settings.to_json()), campaign_dir=campaign_dir,
+        generation_config_payload=generation_payload,
+    )
     threading.Thread(target=_run_pipeline_thread, args=(job,), daemon=True).start()
     return {"ok": True, "job_id": job.id}
 
@@ -682,6 +1145,7 @@ async def resume_job(job_id: str, body: dict | None = None):
         new_json = json.dumps(settings.to_json())
         with queue._connect() as conn:
             conn.execute("UPDATE jobs SET settings_json = ? WHERE id = ?", (new_json, job.id))
+        generation_config.update_supported_settings(job.id, settings)
         job = queue.get_job(job_id)
 
     threading.Thread(target=_run_pipeline_thread, args=(job,), daemon=True).start()
@@ -1689,12 +2153,41 @@ async def custom_404_handler(request, exc):
 # ---- Worker API Endpoints ---------------------------------------------------
 
 @app.get("/api/worker/jobs")
-def get_worker_jobs():
-    """Return all pending jobs and clear the queue."""
+def get_worker_jobs(worker_id: str | None = None):
+    """Return legacy work plus at most one atomically claimed research item."""
     global WORKER_QUEUE
     jobs = list(WORKER_QUEUE)
     WORKER_QUEUE.clear()
+    if not jobs:
+        research_item = research_queue.claim_next(worker_id)
+        if research_item:
+            jobs.append(research_item)
     return {"jobs": jobs}
+
+
+@app.post("/api/worker/research/{item_id}/status")
+def update_worker_research_status(item_id: int, body: ResearchWorkerStatusRequest):
+    try:
+        return research_queue.report_worker_status(item_id, body.claim_token, body.status, body.error)
+    except research_queue.ResearchQueueError as err:
+        raise HTTPException(409, str(err)) from err
+
+
+@app.post("/api/worker/source/{job_id}/status")
+def update_worker_source_status(job_id: str, body: SourceWorkerStatusRequest):
+    job = queue.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "pipeline job not found")
+    if body.status not in {"downloading", "uploading", "failed"}:
+        raise HTTPException(400, "unsupported worker source status")
+    queue.set_job_status(job_id, body.status, body.error)
+    _broadcast_sync({
+        "event": "progress", "job_id": job_id,
+        "stage": body.status, "fraction": -1,
+        "message": body.error or ("Downloading with local downloader" if body.status == "downloading" else "Uploading source media"),
+        "source": "worker",
+    })
+    return {"ok": True, "job_id": job_id, "status": body.status}
 
 @app.post("/api/worker/upload/{campaign_id}/{clip_id}")
 async def worker_upload(
@@ -1779,26 +2272,95 @@ async def worker_upload_source(
     job_id: str,
     video: UploadFile = File(...),
     metadata: UploadFile | None = File(None),
+    resume_pipeline: bool = Form(False),
 ):
-    """Store a laptop-downloaded campaign source in its normal job folder."""
+    """Store a laptop-downloaded source in its normal job folder."""
     job = queue.get_job(job_id)
     if not job:
         raise HTTPException(404, "pipeline job not found")
     job.dir.mkdir(parents=True, exist_ok=True)
+    metadata_payload = {}
+    if metadata is not None:
+        try:
+            candidate = json.loads((await metadata.read()).decode("utf-8"))
+            metadata_payload = candidate if isinstance(candidate, dict) else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            metadata_payload = {}
+    try:
+        provenance = json.loads(job.source_provenance_json or "{}")
+        provenance = provenance if isinstance(provenance, dict) else {}
+    except (TypeError, ValueError):
+        provenance = {}
+    original_url = provenance.get("canonical_url") or provenance.get("original_source_url")
+    if not original_url and job.source_type == "url":
+        original_url = job.source
+    canonical_url = metadata_payload.get("webpage_url") or metadata_payload.get("original_url") or original_url
+    if original_url:
+        provenance["original_source_url"] = original_url
+        provenance["canonical_url"] = canonical_url or original_url
+        provenance.setdefault("source_hash", hashlib.sha256(str(canonical_url or original_url).encode("utf-8")).hexdigest())
+    if metadata_payload.get("id"):
+        provenance["external_video_id"] = str(metadata_payload["id"])
+    if metadata_payload.get("thumbnail") or metadata_payload.get("thumbnail_url"):
+        provenance["thumbnail_url"] = metadata_payload.get("thumbnail") or metadata_payload.get("thumbnail_url")
     video_path = job.dir / "media.mkv"
     with video_path.open("wb") as output:
         while chunk := await video.read(1024 * 1024):
             output.write(chunk)
     with queue._connect() as conn:
         conn.execute(
-            "UPDATE jobs SET source_type = 'file', source = ? WHERE id = ?",
-            (str(video_path), job_id),
+            "UPDATE jobs SET source_type = 'file', source = ?, source_provenance_json = ? WHERE id = ?",
+            (str(video_path), json.dumps(provenance, ensure_ascii=False), job_id),
         )
+    if metadata_payload:
+        (job.dir / "media.info.json").write_text(json.dumps(metadata_payload, ensure_ascii=False, indent=1))
+    (job.dir / "source_provenance.json").write_text(json.dumps(provenance, ensure_ascii=False, indent=1))
     job = queue.get_job(job_id)
     threading.Thread(
         target=_run_pipeline_thread,
-        args=(job, [s for s in _stages() if s.name in ("ingest", "asr")]),
+        args=(job, _stages() if resume_pipeline else [s for s in _stages() if s.name in ("ingest", "asr")]),
         kwargs={"source": "worker"},
         daemon=True,
     ).start()
     return {"ok": True, "job_id": job_id, "message": "source uploaded; ingest and transcription started"}
+
+
+@app.post("/api/worker/upload-research/{item_id}")
+async def worker_upload_research(
+    item_id: int,
+    video: UploadFile = File(...),
+    metadata: UploadFile = File(...),
+    claim_token: str = Form(...),
+):
+    """Persist one claimed original and queue the full-source research path."""
+    try:
+        item = research_queue.claimed_item(item_id, claim_token)
+    except research_queue.ResearchQueueError as err:
+        raise HTTPException(409, str(err)) from err
+    job = queue.get_job(item["job_id"])
+    if not job:
+        research_queue.mark_failed(item_id, "Linked pipeline job was not found.")
+        raise HTTPException(404, "linked pipeline job not found")
+    try:
+        job.dir.mkdir(parents=True, exist_ok=True)
+        video_path = job.dir / "media.mkv"
+        with video_path.open("wb") as output:
+            while chunk := await video.read(1024 * 1024):
+                output.write(chunk)
+        metadata_bytes = await metadata.read()
+        metadata_json = json.loads(metadata_bytes.decode("utf-8"))
+        (job.dir / "media.info.json").write_text(json.dumps(metadata_json, ensure_ascii=False, indent=1))
+        with queue._connect() as conn:
+            conn.execute("UPDATE jobs SET source_type='file',source=? WHERE id=?", (str(video_path), job.id))
+        research_queue.mark_uploaded(item_id, claim_token)
+    except Exception as err:
+        research_queue.mark_failed(item_id, f"Upload processing failed: {err}")
+        raise HTTPException(400, f"upload processing failed: {err}") from err
+
+    job = queue.get_job(job.id)
+    assert job is not None
+    _start_next_research_analysis()
+    return {
+        "ok": True, "queue_item_id": item_id, "job_id": job.id,
+        "message": "source uploaded; queued for full-source analysis",
+    }

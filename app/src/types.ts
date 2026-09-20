@@ -86,11 +86,107 @@ export interface JobSummary {
   thumbnail_url?: string | null
   source?: string
   views?: number | null
+  status?: string
+  current_stage?: string | null
+  stage_progress?: number | null
+  completed_stages?: string[]
+  completed?: boolean
+  error?: string | null
+  created_at?: number
+}
+
+export interface ProjectLifecycleStage {
+  id: string
+  label: string
+  state: 'completed' | 'active' | 'waiting' | 'failed' | 'skipped'
+  progress?: number | null
+  message?: string | null
+  runtime_sec?: number | null
+  error?: string | null
+}
+
+export interface ProjectLifecycle {
+  job_id: string
+  title: string | null
+  source: string
+  thumbnail_url?: string | null
+  status: string
+  current_stage?: string | null
+  progress?: number | null
+  clip_count: number
+  rendered: boolean
+  error?: string | null
+  stages: ProjectLifecycleStage[]
 }
 
 export interface SetupState {
   has_gemini_key: boolean
   onboarded: boolean
+}
+
+export interface GenerationConfig {
+  config_version?: number
+  style_profile_id?: string
+  layout?: {
+    preset_id?: string | null
+    target_aspect_ratio?: string | null
+    content_aspect_ratio?: string | null
+    content_bbox?: Record<string, number> | null
+    background_mode?: string | null
+    title_placement_relation?: string | null
+    custom_overrides?: Record<string, unknown>
+  }
+  captions?: {
+    preset_id?: string | null
+    enabled?: boolean
+    fill?: 'white' | 'yellow' | 'cyan'
+    [key: string]: unknown
+  }
+  title_hook?: {
+    mode?: 'none' | 'generated' | 'manual' | 'profile_default'
+    manual_text?: string | null
+    preset_id?: string | null
+    placement?: string | null
+    enabled?: boolean
+    [key: string]: unknown
+  }
+  broll?: {
+    mode?: 'off' | 'conservative' | 'balanced' | 'aggressive'
+    presentation?: 'replace' | 'overlay' | 'mixed'
+    [key: string]: unknown
+  }
+  sfx?: {
+    mode?: 'off' | 'minimal' | 'balanced' | 'punchy'
+    [key: string]: unknown
+  }
+  music?: {
+    mode?: 'off' | 'low' | 'medium'
+    [key: string]: unknown
+  }
+  camera?: {
+    speaker_change?: 'cut' | 'pan' | 'locked'
+    pan_duration_s?: number
+    deadzone_frac?: number
+    punch?: { enabled?: boolean; intensity?: number; [key: string]: unknown }
+    zoom_lock_per_scene?: boolean
+    [key: string]: unknown
+  }
+  transitions?: { mode?: 'none' | 'minimal' | 'profile_default' | 'custom'; [key: string]: unknown }
+  user_overrides?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface EditStyleProfile {
+  id: string
+  name: string
+  scope: 'global' | 'creator' | 'page/account' | 'client' | 'custom'
+  description: string | null
+  config_version: number
+  config: GenerationConfig
+  is_active: boolean
+  is_default: boolean
+  created_at: number
+  updated_at: number
 }
 
 export interface AnalyzerVideoSummary {
@@ -99,6 +195,8 @@ export interface AnalyzerVideoSummary {
   created_at: number
   analyzed_at: number | null
   duration_sec: number
+  job_mode: 'clipping' | 'research'
+  scoring_status: 'available' | 'unavailable'
   source: {
     title: string | null
     type: string | null
@@ -155,9 +253,97 @@ export interface AnalyzerTimedEvidence {
   [key: string]: unknown
 }
 
+export interface AnalyzerVisualUnit {
+  id: string; start_ms: number; end_ms: number
+  visual_type: 'talking_head' | 'b_roll' | 'screenshot' | 'screen_recording' | 'meme_or_graphic' | 'environment' | 'mixed' | 'uncertain'
+  confidence: number; visual_subject: string | null
+  relation_to_speech: { type: 'speaker_visible' | 'illustrates_speech' | 'demonstrates_speech' | 'contextual_cutaway' | 'unrelated_or_unclear' | 'no_speech'; confidence: number }
+  source_shot_ids: string[]; representative_frame_refs: string[]
+}
+
+export interface AnalyzerFeature<T> {
+  source: 'detector' | 'llm' | 'derived' | 'human'; confidence: number | null
+  status: 'raw' | 'interpreted' | 'corrected' | 'unavailable'
+  evidence: Record<string, unknown>; model_or_detector: string | null; value: T
+}
+
+export interface AnalyzerCaptionTrack {
+  id: string; start_ms: number; end_ms: number; text: string; bbox: AnalyzerBBox; line_count: number
+  confidence: number | null; role: 'caption' | 'emphasized_caption'
+  transcript_alignment: { status: string; similarity: number | null; transcript_reference: { start: number; end: number; text: string } | null }
+  visual_unit_ids: string[]
+}
+
+export interface AnalyzerCaptionEmphasis {
+  start_ms: number; end_ms: number; emphasized_text: string
+  emphasis_type: 'color_highlight' | 'size_emphasis' | 'isolated_word' | 'style_change' | 'possible_scale_pop' | 'unknown_emphasis'
+  confidence: number; caption_track_id: string
+}
+
+export interface AnalyzerAudioSegment {
+  id: string; start_ms: number; end_ms: number
+  type: 'speech' | 'music' | 'sfx' | 'ambience' | 'silence' | 'mixed' | 'uncertain'
+  subtype: string | null; confidence: number
+}
+
+export interface AnalyzerSfxEvent {
+  id: string; start_ms: number; end_ms: number; type: 'sfx'; subtype: string | null
+  confidence: number; energy_peak: number | null; source_detector_labels: string[]
+}
+
+export interface AnalyzerSourceEditingEvent {
+  id: string; type: string; subtype?: string; timestamp_ms?: number
+  start_ms: number; end_ms: number; confidence: number
+  source: 'detector' | 'llm' | 'derived' | 'human'
+  status: 'raw' | 'interpreted' | 'corrected' | 'unavailable'
+  evidence: Record<string, unknown>
+}
+
+export interface AnalyzerSourceEditing {
+  schema_version: number; status: string
+  cuts: AnalyzerFeature<AnalyzerSourceEditingEvent[]>
+  shots: AnalyzerFeature<AnalyzerSourceEditingEvent[]>
+  transitions: AnalyzerFeature<AnalyzerSourceEditingEvent[]>
+  reframes: AnalyzerFeature<AnalyzerSourceEditingEvent[]>
+  zooms: AnalyzerFeature<AnalyzerSourceEditingEvent[]>
+  pattern_interrupts: AnalyzerFeature<AnalyzerSourceEditingEvent[]>
+  cross_modal_relationships: Array<Record<string, unknown>>
+  metrics: Record<string, unknown>; capabilities: Record<string, unknown>
+  evidence: Record<string, unknown>; provenance: Record<string, unknown>; limitations: string[]
+}
+
+export interface AnalyzerSemanticUnit {
+  semantic_unit_id: string; start_ms: number; end_ms: number; speaker_ids: string[]
+  transcript: string; semantic_summary: string; primary_story_role: string; secondary_roles: string[]
+  confidence: number; source: 'detector' | 'llm' | 'derived' | 'human'
+  status: 'raw' | 'interpreted' | 'corrected' | 'unavailable'; references: Record<string, string[]>
+}
+
+export interface AnalyzerStorySegment {
+  story_id: string; start_ms: number; end_ms: number; semantic_unit_ids: string[]
+  topic_summary: string; start_reason: string; end_reason: string; confidence: number
+  completeness: {
+    setup_complete: boolean; claim_complete: boolean; payoff_present: boolean
+    conclusion_present: boolean; unresolved: boolean; next_topic_started: boolean
+    likely_semantic_end_ms: number
+  }
+}
+
+export interface AnalyzerSpeechStory {
+  schema_version: number; status: string
+  transcript: AnalyzerFeature<Record<string, unknown>>; speaker_structure: AnalyzerFeature<Record<string, unknown>>
+  semantic_units: AnalyzerFeature<AnalyzerSemanticUnit[]>; story_segments: AnalyzerFeature<AnalyzerStorySegment[]>
+  story_beats: AnalyzerFeature<AnalyzerStorySegment[]>
+  hooks: AnalyzerFeature<Array<{ id: string; start_ms: number; end_ms: number; semantic_unit_id: string | null; hook_types: string[] }>>
+  speech_signals: AnalyzerFeature<Array<Record<string, unknown>>>
+  payoff_relationships: AnalyzerFeature<Array<Record<string, unknown>>>
+  structural_metrics: Record<string, number | null>; evidence: Record<string, unknown>
+  provenance: Record<string, unknown>; limitations: string[]
+}
+
 export type CreatorPerformanceLabel = 'strong' | 'average' | 'weak' | 'unclassified'
 export type CreatorSelectionReason = 'creator_relative_strong' | 'creator_relative_average' | 'creator_relative_weak' | 'top_views' | 'manual' | 'editing_reference'
-export type ResearchQueueStatus = 'queued' | 'claimed_by_worker' | 'downloading' | 'uploading' | 'uploaded' | 'analyzing' | 'completed' | 'failed' | 'cancelled'
+export type ResearchQueueStatus = 'queued' | 'claimed_by_worker' | 'downloading' | 'uploading' | 'uploaded' | 'waiting_for_analysis' | 'analyzing' | 'completed' | 'failed' | 'cancelled'
 
 export interface CreatorSourceVideo {
   id: number; platform: 'youtube'; external_video_id: string; creator_source_id: number
@@ -198,6 +384,48 @@ export interface QueueSelectedResult {
 }
 
 export interface AnalyzerVideoDetail {
+  analysis_run: {
+    analysis_run_id: string; job_id: string; creator_video_id: number | null; source_identity: string | null
+    analyzer_version: string; schema_version: number; pipeline_version: string | null; config_fingerprint: string | null
+    status: string; artifact_path: string | null; started_at: number | null; completed_at: number | null
+    created_at: number | null; error: string | null
+  }
+  analyzer_version: string
+  video_dna: {
+    source: Record<string, unknown>; provenance: Record<string, unknown>
+    speech_story: AnalyzerSpeechStory; text_system: {
+      title_hooks: AnalyzerFeature<Array<Record<string, unknown>>>; text_blocks: AnalyzerFeature<Array<Record<string, unknown>>>
+      caption_tracks: AnalyzerFeature<AnalyzerCaptionTrack[]>; emphasis_events: AnalyzerFeature<AnalyzerCaptionEmphasis[]>
+      overlays: Array<Record<string, unknown>>; caption_metrics: { captions_present?: boolean; caption_coverage_ratio?: number; caption_event_count?: number; emphasis_event_count?: number }
+      caption_evidence: Record<string, unknown>; caption_provenance: Record<string, unknown>; caption_limitations: string[]
+      caption_style: { status: string; reason: string }
+    }; layout: Record<string, unknown>
+    visual: {
+      status: string; visual_units: AnalyzerFeature<AnalyzerVisualUnit[]>; b_roll_segments: AnalyzerFeature<Array<Record<string, unknown>>>
+      objects_entities_summary: Array<{ label: string; confidence: number; unit_count: number }>
+      scene_environment_summary: Array<{ label: string; confidence: number; unit_count: number }>
+      actions_summary: Array<{ label: string; confidence: number; unit_count: number }>
+      ratios_statistics: {
+        talking_head_ratio?: number; b_roll_ratio?: number; screenshot_or_graphic_ratio?: number
+        visual_change_rate_per_minute?: number; shot_count?: number; median_shot_duration_sec?: number; average_shot_duration_sec?: number
+      }
+      evidence: Record<string, unknown>; provenance: Record<string, unknown>; limitations: string[]
+      observations: AnalyzerFeature<AnalyzerTimedEvidence[]>; scene_markers: AnalyzerFeature<number[]>
+      object_action_understanding: { status: string; reason: string }; b_roll_detection: { status: string; reason: string }
+    }
+    source_editing: AnalyzerSourceEditing; audio: {
+      status: string; audio_segments: AnalyzerFeature<AnalyzerAudioSegment[]>
+      music_segments: AnalyzerFeature<Array<Record<string, unknown>>>; sfx_events: AnalyzerFeature<AnalyzerSfxEvent[]>
+      dynamics: Record<string, unknown>; ducking_events: Array<{ id: string; start_ms: number; end_ms: number; confidence: number; type: string }>
+      cross_modal_relationships: Array<{ relation_type: string; audio_event_id: string; target_type: string; target_id_reference: string; delta_ms: number; confidence: number }>
+      metrics: { speech_coverage_ratio?: number; music_coverage_ratio?: number; silence_ratio?: number; sfx_event_count?: number; probable_ducking_event_count?: number }
+      provenance: Record<string, unknown>; evidence: Record<string, unknown>; limitations: string[]
+      events: AnalyzerFeature<Array<Record<string, unknown>>>; signal_summaries: Array<Record<string, unknown>>
+      music_segmentation: { status: string; reason: string }; sound_effect_detection: { status: string; reason: string }
+      audio_dynamics: { status: string; reason: string }; cross_modal_audio_alignment: { status: string; reason: string }
+    }
+    performance: Record<string, unknown>; uncertainty: Record<string, unknown>; human_corrections: Record<string, unknown>
+  }
   job: AnalyzerVideoSummary & { error: string | null }
   source: AnalyzerVideoSummary['source'] & { probe: Record<string, number | string | boolean | null>; heatmap_available: boolean }
   transcript: { language: string | null; model: string | null; word_count: number | null; segments: AnalyzerSegment[] }
@@ -208,10 +436,19 @@ export interface AnalyzerVideoDetail {
     counts: Record<string, number>
     arousal_source: string | null
     curves: Array<{ name: string; values: number[]; sample_count: number; grid_sec: number | null; min: number | null; max: number | null; mean: number | null }>
+    audio_intelligence: Record<string, unknown> | null
+    source_editing: Record<string, unknown> | null
+    story_semantics: Record<string, unknown> | null
+    detector_benchmark: Record<string, number>
   }
   source_analysis: {
     available: boolean
     text_tracks: AnalyzerTextTrack[]
+    text_blocks: Array<{
+      id: string; text: string; start: number; end: number; bbox: AnalyzerBBox; line_count: number
+      confidence: number; canvas_position: string; content_relation: string; source_track_ids: string[]
+      lines: Array<{ track_id: string; text: string; start: number; end: number; bbox: AnalyzerBBox; confidence: number }>
+    }>
     title_hook_candidates: Array<{
       track_id: string; text: string; start: number; end: number; confidence: number
       classification: 'title_hook'; bbox: AnalyzerBBox; canvas_position: string; content_relation: string
@@ -224,6 +461,9 @@ export interface AnalyzerVideoDetail {
     }
     layout_signature: Record<string, unknown> | null
     visual_observations: AnalyzerTimedEvidence[]
+    visual_understanding: Record<string, unknown> | null
+    caption_system: Record<string, unknown> | null
+    audio_intelligence: Record<string, unknown> | null
     source_editing_evidence: {
       shot_cuts: AnalyzerTimedEvidence[]; visual_change_density_per_minute: number | null
       layout_changes: AnalyzerTimedEvidence[]; b_roll_candidates: AnalyzerTimedEvidence[]; provenance: Record<string, unknown>
@@ -231,6 +471,10 @@ export interface AnalyzerVideoDetail {
     runtime: {
       ocr_sec: number | null; layout_sec: number | null; visual_sampling_sec: number | null
       sample_count: number | null; device: string | null; onnx_providers: string[]; artifact_size_bytes: number | null
+      visual_semantic_sec: number | null; visual_semantic_sample_count: number | null
+      visual_semantic_inference_batches: number | null; visual_semantic_peak_gpu_memory_bytes: number | null
+      audio_intelligence_sec: number | null
+      story_semantics_sec: number | null
     }
     provenance: Record<string, unknown>
   }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { JobSummary } from '../types'
+import type { GenerationConfig, JobSummary } from '../types'
 import KeyModal from './KeyModal'
 import RedesignedStudio from './RedesignedStudio'
 
@@ -82,9 +82,11 @@ interface Props {
   jobsError: string | null
   running: boolean
   stages: Record<string, { fraction: number; message: string }>
+  activeJobId: string | null
+  activeStage: string | null
   error: string | null
   initialSource?: string
-  onRun: (source: string, llm: string, geminiModel: string, captions: string, asrModel: string, captionColor: string) => void
+  onRun: (source: string, llm: string, geminiModel: string, captions: string, asrModel: string, captionColor: string, generationConfig?: GenerationConfig) => void
   onOpenLoop: () => void
   onOpenAnalytics: () => void
   onOpenQueue: () => void
@@ -93,10 +95,11 @@ interface Props {
   onOpenJob: (id: string) => void
   onResume: (id: string, llm?: string, geminiModel?: string, asrModel?: string) => void
   onDeleteJob: (id: string) => void
-  onUpload: (file: File, llm: string, geminiModel: string, captions: string, asrModel: string) => void
+  onDeleteJobs: (ids: string[]) => Promise<void>
+  onUpload: (file: File, llm: string, geminiModel: string, captions: string, asrModel: string, generationConfig?: GenerationConfig) => void
 }
 
-export default function Studio({ jobs, jobsLoading, jobsError, running, stages, error, initialSource, onRun, onUpload, onOpenLoop, onOpenAnalytics, onOpenQueue, onOpenTranscribeQueue, onOpenAnalyzer, onOpenJob, onResume, onDeleteJob }: Props) {
+export default function Studio({ jobs, jobsLoading, jobsError, running, stages, activeJobId, activeStage, error, initialSource, onRun, onUpload, onOpenLoop, onOpenAnalytics, onOpenQueue, onOpenTranscribeQueue, onOpenAnalyzer, onOpenJob, onResume, onDeleteJob, onDeleteJobs }: Props) {
   const [source, setSource] = useState(initialSource || '')
   const [llm, setLlm] = useState('ollama')
   const [geminiModel, setGeminiModel] = useState('gemini-3.7-flash')
@@ -135,7 +138,7 @@ export default function Studio({ jobs, jobsLoading, jobsError, running, stages, 
     cyan: '#00E5FF',
   } as const
 
-  return <RedesignedStudio jobs={jobs} running={running} initialSource={initialSource} onRun={onRun} onUpload={onUpload} onOpenJob={onOpenJob} onOpenLoop={onOpenLoop} onOpenQueue={onOpenQueue} onOpenTranscribeQueue={onOpenTranscribeQueue} onOpenAnalyzer={onOpenAnalyzer} />
+  return <RedesignedStudio jobs={jobs} running={running} error={error} stages={stages} activeJobId={activeJobId} activeStage={activeStage} initialSource={initialSource} onRun={onRun} onUpload={onUpload} onOpenJob={onOpenJob} onDeleteJobs={onDeleteJobs} onOpenLoop={onOpenLoop} onOpenQueue={onOpenQueue} onOpenTranscribeQueue={onOpenTranscribeQueue} onOpenAnalyzer={onOpenAnalyzer} />
 
   const renderCaptionPreview = () => {
     const currentPhrase = SAMPLE_PHRASES[phraseIdx]

@@ -1,10 +1,9 @@
-"""Scoring stage: T1 rubric per candidate → cross-validation → rank → T2
-frames on the finalists → per-platform composites + music briefs, all with
-full provenance (decision #3).
+"""Candidate scoring/finalization stage.
 
-Cost shape: ~35 T1 text calls + ~12 T2 vision calls + ~12 music calls per
-video on Gemini Flash. In Ollama mode T2 is skipped (recorded as a missing
-signal) and scores are labeled local-estimate."""
+Clip Selection v2 candidates are already scored from source evidence and pass
+through without new LLM or vision calls. Legacy candidate artifacts retain the
+existing T1/T2 scoring path for compatibility.
+"""
 
 from __future__ import annotations
 
@@ -93,9 +92,53 @@ def _deep_judge_prompt(transcript: str, candidate_types: list[str], context: dic
     )
 
 
+def _selection_v2_output(candidates: dict, segments: list[dict]) -> dict:
+    clips = []
+    for candidate in candidates.get("portfolio") or []:
+        start, end = float(candidate["start"]), float(candidate["end"])
+        labeled, flat = _transcript_slice(segments, start, end)
+        features = candidate.get("features") or {}
+        score = float(candidate.get("score") or 0)
+        evidence_keys = {
+            "source_editing": "source_editing_event_ids", "visual": "visual_unit_ids",
+            "captions": "caption_event_ids", "audio": "audio_event_ids",
+        }
+        fired = [name for name, key in evidence_keys.items() if (candidate.get("evidence") or {}).get(key)]
+        clips.append({
+            **{key: value for key, value in candidate.items() if key != "source_transcript"},
+            "start": start, "end": end, "score": score,
+            "platform_scores": {"tiktok": score, "reels": score, "shorts": score},
+            "best_platform": "source_material",
+            "subscores": {
+                key: round(float(value) * 10, 2)
+                for key, value in features.items() if isinstance(value, (int, float))
+            },
+            "adjustments": [], "signals_fired": fired,
+            "signals_missing": [name for name in ("visual", "captions", "audio") if name not in fired],
+            "confidence": "high" if float(candidate.get("semantic_closure_confidence") or 0) >= .8 else "standard",
+            # This is source transcript, not an embellished generated summary.
+            "summary": flat[:320], "candidate_types": [candidate.get("origin") or "semantic_moment"],
+            "arousal_pct": features.get("delivery_energy") or 0.0, "heatmap_pct": None,
+            "curve_score": features.get("moment_strength") or 0.0,
+            "channel_scores": {}, "t1_raw": None, "t2": None, "music": None,
+            "source_transcript_excerpt": labeled[:1200],
+        })
+    return {
+        "selection_version": "clip-selection-v2", "llm_mode": "selection-v2",
+        "model": "story-aware-rules-v2", "llm_generation": {
+            "thinking_enabled": None, "generation_options": {}, "call_count": 0,
+        },
+        "clips": clips, "scored_count": int(candidates.get("post_dedupe_count") or len(candidates.get("candidates") or [])),
+        "portfolio_maximum": SELECT_COUNT,
+        "quality_bucket_counts": candidates.get("quality_bucket_counts") or {},
+        "t2_ran": False, "scoring_config_version": "clip-selection-v2",
+        "scoring_constants": {},
+    }
+
+
 class ScoreStage(Stage):
     name = "score"
-    schema_version = 1
+    schema_version = 2
 
     def run(self, ctx: StageContext) -> dict:
         prior = ctx.prior or {}
@@ -106,11 +149,21 @@ class ScoreStage(Stage):
         if not (ingest and diarize and events and cands):
             raise StageError("Scoring needs ingest + diarize + events + candidates.")
 
+        if cands.get("selection_version") == "clip-selection-v2":
+            ctx.emit(0.95, "Finalizing diverse story-aware candidate portfolio…")
+            return _selection_v2_output(cands, diarize.get("segments") or [])
+
         llm_mode = ctx.settings.llm_mode
         client = None
         if llm_mode != "manual":
             try:
-                client = llm_mod.make_client(llm_mode, gemini_model=ctx.settings.gemini_model)
+                client = llm_mod.make_client(
+                    llm_mode,
+                    gemini_model=ctx.settings.gemini_model,
+                    ollama_model=ctx.settings.ollama_model,
+                    ollama_base_url=ctx.settings.ollama_base_url,
+                    ollama_num_predict=ctx.settings.ollama_num_predict,
+                )
             except llm_mod.LlmError as err:
                 raise StageError(str(err)) from err
 
@@ -336,6 +389,10 @@ class ScoreStage(Stage):
         return {
             "llm_mode": llm_mode,
             "model": client.model if client else "manual",
+            "llm_generation": client.generation_metadata() if client else {
+                "thinking_enabled": None,
+                "generation_options": {},
+            },
             "clips": finalists,
             "scored_count": len(scored),
             "t2_ran": supports_vision,

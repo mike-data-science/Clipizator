@@ -56,7 +56,7 @@ export function AnalyzerVideos({ onBack, onOpen, onSources, onQueue }: { onBack:
         <div className="analyzer-count">{loading ? 'Loading…' : `${videos.length} video${videos.length === 1 ? '' : 's'}`}</div>
       </div>
       {error && <div className="analyzer-error">{error}</div>}
-      {!loading && !error && videos.length === 0 && <div className="analyzer-empty"><h2>No analyzed Shorts yet</h2><p>Completed short-form jobs with scoring artifacts will appear here.</p></div>}
+      {!loading && !error && videos.length === 0 && <div className="analyzer-empty"><h2>No analyzed Shorts yet</h2><p>Completed short-form jobs with source analysis or scoring artifacts will appear here.</p></div>}
       <div className="analyzer-video-grid">
         {videos.map(video => <button className="analyzer-video-card" key={video.job_id} onClick={() => onOpen(video.job_id)}>
           <div className="analyzer-card-preview">
@@ -75,9 +75,9 @@ export function AnalyzerVideos({ onBack, onOpen, onSources, onQueue }: { onBack:
               <span><b>{video.scene_count ?? '—'}</b>Scenes</span>
               <span><b>{video.speaker_count ?? '—'}</b>Speakers</span>
               <span><b>{video.audio_event_count ?? '—'}</b>Audio events</span>
-              <span><b>{video.candidate_count ?? '—'}/{video.scored_count ?? '—'}</b>Candidates / scored</span>
+              <span><b>{video.job_mode === 'research' ? 'Full' : `${video.candidate_count ?? '—'}/${video.scored_count ?? '—'}`}</b>{video.job_mode === 'research' ? 'Source analyzed' : 'Candidates / scored'}</span>
             </div>
-            <div className="analyzer-card-foot"><span>{video.model || 'Model not available'}</span><time>{fmtDate(video.analyzed_at)}</time></div>
+            <div className="analyzer-card-foot"><span>{video.scoring_status === 'unavailable' ? 'Candidate scoring unavailable' : video.model || 'Model not available'}</span><time>{fmtDate(video.analyzed_at)}</time></div>
           </div>
         </button>)}
       </div>
@@ -151,7 +151,7 @@ export function ResearchQueue({ onBack, onSources, onOpen }: { onBack: () => voi
     <div className="analyzer-page-head"><div><p className="analyzer-kicker">ANALYZER / RESEARCH</p><h1>Research queue</h1><span>Selected originals are downloaded sequentially by the laptop worker, then analyzed through the existing pipeline.</span></div><div className="analyzer-count">{items.length} item{items.length === 1 ? '' : 's'}</div></div>
     {error && <div className="analyzer-error">{error}</div>}
     {!error && items.length === 0 && <div className="analyzer-empty"><h2>Queue is empty</h2><p>Select videos from a creator source, then choose Queue selected.</p></div>}
-    <div className="research-queue-list">{items.map(item => <article className="research-queue-row" key={item.id}><div><b>{item.catalog_title || item.external_video_id}</b><span>{item.creator_display_name || (item.creator_handle ? `@${item.creator_handle}` : 'YouTube creator')}</span><small>Queued {fmtDate(item.created_at)} · Item #{item.id}</small></div><div><b className={`research-status ${item.status}`}>{titleCase(item.status)}</b><span>Analysis: {titleCase(item.analysis_status || 'pending')}</span><small>{item.progress_stage ? `Stage: ${titleCase(item.progress_stage)} · ` : ''}{item.job_id || 'Job not linked'}</small></div><div>{item.failure_reason && <p>{item.failure_reason}</p>}{item.status === 'failed' && <button onClick={() => void retry(item)}>Retry</button>}{item.status === 'completed' && item.job_id && <button onClick={() => onOpen(item.job_id!)}>Open analysis</button>}</div></article>)}</div>
+    <div className="research-queue-list">{items.map(item => <article className="research-queue-row" key={item.id}><div><b>{item.catalog_title || item.external_video_id}</b><span>{item.creator_display_name || (item.creator_handle ? `@${item.creator_handle}` : 'YouTube creator')}</span><small>Queued {fmtDate(item.created_at)} · Item #{item.id}</small></div><div><b className={`research-status ${item.status}`}>{item.status === 'waiting_for_analysis' ? 'Uploaded / Waiting for analysis' : titleCase(item.status)}</b><span>Analysis: {titleCase(item.analysis_status || 'pending')}</span><small>{item.status === 'analyzing' && item.progress_stage ? `Stage: ${titleCase(item.progress_stage)} · ` : ''}{item.job_id || 'Job not linked'}</small></div><div>{item.failure_reason && <p>{item.failure_reason}</p>}{item.status === 'failed' && <button onClick={() => void retry(item)}>Retry</button>}{item.status === 'completed' && item.job_id && <button onClick={() => onOpen(item.job_id!)}>Open analysis</button>}</div></article>)}</div>
   </div></AnalyzerShell>
 }
 
@@ -161,15 +161,38 @@ function Timeline({ data, duration, onSeek }: { data: AnalyzerDetail; duration: 
   const candidates = data.candidate_analysis.clips
   const punches = data.generated_edit.trajectories.flatMap(item => item.punches)
   const source = data.source_analysis
+  const visualUnits = data.video_dna.visual.visual_units.value
+  const captions = data.video_dna.text_system.caption_tracks.value
+  const emphasis = data.video_dna.text_system.emphasis_events.value
+  const audioSegments = data.video_dna.audio.audio_segments.value
+  const sfxEvents = data.video_dna.audio.sfx_events.value
+  const sourceEditing = data.video_dna.source_editing
+  const speechStory = data.video_dna.speech_story
+  const semanticUnits = speechStory.semantic_units.value
+  const storySegments = speechStory.story_segments.value
+  const storyIndicators = [
+    ...speechStory.hooks.value.map(item => ({ start_ms: item.start_ms, end_ms: item.end_ms, label: `Hook-like: ${item.hook_types.map(titleCase).join(', ')}` })),
+    ...semanticUnits.filter(item => ['reveal', 'payoff'].includes(item.primary_story_role)).map(item => ({ start_ms: item.start_ms, end_ms: item.end_ms, label: titleCase(item.primary_story_role) })),
+  ]
   const rows = [
     { name: 'Speech', items: speech.map(item => ({ start: item.start, end: item.end, label: item.text, kind: 'speech' })) },
     { name: 'Speaker turns', items: data.speakers.turns.map(item => ({ start: item.start, end: item.end, label: `Speaker ${item.speaker + 1}`, kind: `speaker-${item.speaker % 4}` })) },
-    { name: 'Scenes', items: data.scenes.timestamps.map(item => ({ start: item, end: item + .08, label: `Scene at ${fmtTime(item)}`, kind: 'scene' })) },
+    { name: 'Source cuts', items: sourceEditing.cuts.value.map(item => ({ start: item.start_ms / 1000, end: Math.max(item.end_ms / 1000, item.start_ms / 1000 + .08), label: `${titleCase(item.type)} at ${fmtTime(item.start_ms / 1000)}`, kind: 'scene' })) },
+    { name: 'Source reframes / zooms', items: [...sourceEditing.reframes.value, ...sourceEditing.zooms.value].map(item => ({ start: item.start_ms / 1000, end: Math.max(item.end_ms / 1000, item.start_ms / 1000 + .08), label: titleCase(item.subtype || item.type), kind: 'layout-change' })) },
+    { name: 'Pattern interrupts', items: sourceEditing.pattern_interrupts.value.map(item => ({ start: item.start_ms / 1000, end: Math.max(item.end_ms / 1000, item.start_ms / 1000 + .08), label: titleCase(item.subtype || item.type), kind: 'visual-observation' })) },
+    { name: 'Story / ideas', items: storySegments.map(item => ({ start: item.start_ms / 1000, end: item.end_ms / 1000, label: `${item.topic_summary} · ${item.end_reason}`, kind: 'candidate' })) },
+    { name: 'Semantic roles', items: semanticUnits.map(item => ({ start: item.start_ms / 1000, end: item.end_ms / 1000, label: `${titleCase(item.primary_story_role)} — ${item.semantic_summary}`, kind: 'speech' })) },
+    { name: 'Hooks / reveals / payoff', items: storyIndicators.map(item => ({ start: item.start_ms / 1000, end: item.end_ms / 1000, label: item.label, kind: 'title-hook' })) },
     { name: 'Audio events', items: data.audio.events.map(item => ({ start: item.start, end: item.end, label: titleCase(item.type), kind: 'audio' })) },
+    { name: 'Audio intelligence', items: audioSegments.map(item => ({ start: item.start_ms / 1000, end: item.end_ms / 1000, label: titleCase(item.type), kind: `audio-${item.type}` })) },
+    { name: 'SFX', items: sfxEvents.map(item => ({ start: item.start_ms / 1000, end: item.end_ms / 1000, label: titleCase(item.subtype || 'SFX'), kind: 'audio-sfx' })) },
     { name: 'On-screen text', items: source.text_tracks.map(item => ({ start: item.start, end: item.end, label: item.text, kind: 'ocr' })) },
     { name: 'Title hook', items: source.title_hook_candidates.map(item => ({ start: item.start, end: item.end, label: item.text, kind: 'title-hook' })) },
+    { name: 'Captions', items: captions.map(item => ({ start: item.start_ms / 1000, end: item.end_ms / 1000, label: item.text, kind: 'caption' })) },
+    { name: 'Caption emphasis', items: emphasis.map(item => ({ start: item.start_ms / 1000, end: item.end_ms / 1000, label: `${item.emphasized_text} — ${titleCase(item.emphasis_type)}`, kind: 'caption-emphasis' })) },
     { name: 'Layout changes', items: source.source_editing_evidence.layout_changes.map(item => ({ start: item.start, end: Math.max(item.end, item.start + .08), label: `Layout change at ${fmtTime(item.start)}`, kind: 'layout-change' })) },
     { name: 'Visual observations', items: source.visual_observations.map(item => ({ start: item.start, end: item.end, label: titleCase(item.type || 'visual observation'), kind: 'visual-observation' })) },
+    { name: 'Visual units', items: visualUnits.map(item => ({ start: item.start_ms / 1000, end: item.end_ms / 1000, label: `${titleCase(item.visual_type)}${item.visual_subject ? ` — ${item.visual_subject}` : ''}`, kind: item.visual_type === 'b_roll' ? 'b-roll' : 'visual-observation' })) },
     { name: 'B-roll candidates', items: source.source_editing_evidence.b_roll_candidates.map(item => ({ start: item.start, end: item.end, label: 'Potential source B-roll', kind: 'b-roll' })) },
     { name: 'Candidate interval', items: candidates.map(item => ({ start: item.start, end: item.end, label: `Candidate ${fmtTime(item.start)}–${fmtTime(item.end)}`, kind: 'candidate' })) },
     { name: 'Generated punch-ins', items: punches.map(item => ({ start: item.source_start, end: item.source_end, label: `${titleCase(item.trigger)} punch-in`, kind: 'punch' })) },
@@ -200,6 +223,72 @@ function Curve({ curve }: { curve: AnalyzerDetail['audio']['curves'][number] }) 
     {points ? <svg viewBox="0 0 100 38" preserveAspectRatio="none" aria-label={`${curve.name} signal`}><polyline points={points} /></svg> : <EmptyValue />}
     {curve.mean !== null && <small>Mean {curve.mean.toFixed(3)} · Range {curve.min?.toFixed(3)}–{curve.max?.toFixed(3)}</small>}
   </div>
+}
+
+function VisualUnderstanding({ data, onSeek }: { data: AnalyzerDetail; onSeek: (time: number) => void }) {
+  const visual = data.video_dna.visual
+  const units = visual.visual_units.value
+  const metrics = visual.ratios_statistics
+  const ratio = (value: number | undefined) => value === undefined ? 'Not available' : `${Math.round(value * 100)}%`
+  return <section className="analyzer-major-section visual-understanding">
+    <div className="analyzer-major-head"><span className="analyzer-category blue">V</span><div><p>VISUAL UNDERSTANDING</p><h2>Source visual timeline</h2><span>Sparse shot-level evidence; generated camera decisions are excluded.</span></div></div>
+    <div className="analyzer-visual-metrics">
+      <span><b>{ratio(metrics.talking_head_ratio)}</b>Talking head</span>
+      <span><b>{ratio(metrics.b_roll_ratio)}</b>B-roll</span>
+      <span><b>{ratio(metrics.screenshot_or_graphic_ratio)}</b>Screen / graphic</span>
+      <span><b>{metrics.shot_count ?? '—'}</b>Shots</span>
+    </div>
+    <div className="analyzer-visual-units">{units.length ? units.map(unit => <button key={unit.id} onClick={() => onSeek(unit.start_ms / 1000)}>
+      <time>{fmtTime(unit.start_ms / 1000)}–{fmtTime(unit.end_ms / 1000)}</time>
+      <div><b>{titleCase(unit.visual_type)}{unit.visual_subject ? ` — ${unit.visual_subject}` : ''}</b><span>{titleCase(unit.relation_to_speech.type)} · {Math.round(unit.confidence * 100)}% confidence</span></div>
+    </button>) : <EmptyValue />}</div>
+    {visual.limitations.length > 0 && <small className="analyzer-visual-limit">{visual.limitations[0]}</small>}
+  </section>
+}
+
+function CaptionSystem({ data, onSeek }: { data: AnalyzerDetail; onSeek: (time: number) => void }) {
+  const text = data.video_dna.text_system
+  const captions = text.caption_tracks.value
+  const emphasisByTrack = new Map(text.emphasis_events.value.map(item => [item.caption_track_id, item]))
+  const metrics = text.caption_metrics
+  const ratio = typeof metrics.caption_coverage_ratio === 'number' ? `${Math.round(metrics.caption_coverage_ratio * 100)}%` : 'Not available'
+  return <section className="analyzer-major-section caption-system">
+    <div className="analyzer-major-head"><span className="analyzer-category purple">C</span><div><p>CAPTION SYSTEM</p><h2>Dynamic on-screen captions</h2><span>Derived from OCR tracks; title hooks remain separate.</span></div></div>
+    <div className="analyzer-visual-metrics">
+      <span><b>{data.source_analysis.title_hook_candidates[0]?.text ? 'Yes' : '—'}</b>Title hook</span>
+      <span><b>{metrics.caption_event_count ?? 0}</b>Captions detected</span>
+      <span><b>{ratio}</b>Caption coverage</span>
+      <span><b>{metrics.emphasis_event_count ?? 0}</b>Emphasis events</span>
+    </div>
+    <div className="analyzer-visual-units">{captions.length ? captions.map(caption => {
+      const event = emphasisByTrack.get(caption.id)
+      return <button key={caption.id} onClick={() => onSeek(caption.start_ms / 1000)}><time>{fmtTime(caption.start_ms / 1000)}–{fmtTime(caption.end_ms / 1000)}</time><div><b>{caption.text}{event ? ` — ${event.emphasized_text}` : ''}</b><span>{event ? `${titleCase(event.emphasis_type)} · ` : ''}{caption.transcript_alignment.status} · {caption.confidence === null ? 'confidence unavailable' : `${Math.round(caption.confidence * 100)}% confidence`}</span></div></button>
+    }) : <EmptyValue detected />}</div>
+    {text.caption_limitations.length > 0 && <small className="analyzer-visual-limit">{text.caption_limitations[0]}</small>}
+  </section>
+}
+
+function AudioIntelligence({ data, onSeek }: { data: AnalyzerDetail; onSeek: (time: number) => void }) {
+  const audio = data.video_dna.audio
+  const metrics = audio.metrics
+  const relations = new Map(audio.cross_modal_relationships.map(item => [item.audio_event_id, item]))
+  const ratio = (value: number | undefined) => typeof value === 'number' ? `${Math.round(value * 100)}%` : 'Not available'
+  return <section className="analyzer-major-section audio-intelligence">
+    <div className="analyzer-major-head"><span className="analyzer-category amber">A</span><div><p>AUDIO INTELLIGENCE</p><h2>Source audio timeline</h2><span>PANNs, transcript timing, and source signal dynamics; render audio is excluded.</span></div></div>
+    <div className="analyzer-audio-metrics">
+      <span><b>{ratio(metrics.speech_coverage_ratio)}</b>Speech</span>
+      <span><b>{ratio(metrics.music_coverage_ratio)}</b>Music</span>
+      <span><b>{metrics.sfx_event_count ?? 0}</b>SFX</span>
+      <span><b>{ratio(metrics.silence_ratio)}</b>Silence</span>
+      <span><b>{metrics.probable_ducking_event_count ?? 0}</b>Probable ducking</span>
+    </div>
+    <div className="analyzer-audio-timeline">
+      {audio.audio_segments.value.map(segment => <button key={segment.id} onClick={() => onSeek(segment.start_ms / 1000)}><time>{fmtTime(segment.start_ms / 1000)}–{fmtTime(segment.end_ms / 1000)}</time><div><b>{titleCase(segment.type)}</b><span>{Math.round(segment.confidence * 100)}% confidence</span></div></button>)}
+      {audio.sfx_events.value.map(event => { const relation = relations.get(event.id); return <button key={event.id} onClick={() => onSeek(event.start_ms / 1000)}><time>{fmtTime(event.start_ms / 1000)}–{fmtTime(event.end_ms / 1000)}</time><div><b>{titleCase(event.subtype || 'SFX')}</b><span>{relation ? `${titleCase(relation.relation_type)} · Δ ${relation.delta_ms}ms` : 'No supported cross-modal alignment'} · {Math.round(event.confidence * 100)}%</span></div></button> })}
+      {!audio.audio_segments.value.length && !audio.sfx_events.value.length && <EmptyValue detected />}
+    </div>
+    {audio.limitations.length > 0 && <small className="analyzer-visual-limit">{audio.limitations[0]}</small>}
+  </section>
 }
 
 function SourceAnalysis({ data, currentTime, onSeek }: { data: AnalyzerDetail; currentTime: number; onSeek: (time: number) => void }) {
@@ -336,7 +425,7 @@ export function AnalyzerVideoDetail({ jobId, onBack, onHome, onSources, onQueue 
     <div className="analyzer-page analyzer-detail">
       <button className="analyzer-back" onClick={onBack}>← All analyzed videos</button>
       <div className="analyzer-detail-head">
-        <div><p className="analyzer-kicker">ANALYZER VIDEO DETAIL</p><h1>{data.source.title || 'Title not available'}</h1><span className="analyzer-job-id">{jobId}</span></div>
+        <div><p className="analyzer-kicker">ANALYZER VIDEO DETAIL</p><h1>{data.source.title || 'Title not available'}</h1><span className="analyzer-job-id">Analyzer {data.analyzer_version === 'legacy' ? 'legacy' : `v${data.analyzer_version}`} · Analysis Run {data.analysis_run.analysis_run_id}</span></div>
         <span className="analyzer-success"><i />Analysis complete</span>
       </div>
       <section className="analyzer-hero">
@@ -360,6 +449,9 @@ export function AnalyzerVideoDetail({ jobId, onBack, onHome, onSources, onQueue 
       </section>
       <Timeline data={data} duration={duration} onSeek={seek} />
       <SourceAnalysis data={data} currentTime={currentTime} onSeek={seek} />
+      <VisualUnderstanding data={data} onSeek={seek} />
+      <CaptionSystem data={data} onSeek={seek} />
+      <AudioIntelligence data={data} onSeek={seek} />
       <AIInterpretation data={data} />
       <GeneratedEdits data={data} />
       <QASection data={data} />

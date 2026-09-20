@@ -71,6 +71,7 @@ def test_create_and_get_job():
     fetched = queue.get_job(job.id)
     assert fetched is not None
     assert fetched.source == "/tmp/x.mp4"
+    assert fetched.job_mode == "clipping"
     assert job.dir.exists()
     assert (job.dir / "settings.json").exists()
 

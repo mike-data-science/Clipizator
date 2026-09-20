@@ -1,37 +1,48 @@
 import { useEffect, useState } from 'react'
 import type { JobSummary, Campaign } from '../types'
+import type { GenerationConfig } from '../types'
 import { api } from '../api'
+import CreativeSetup from './CreativeSetupV2'
 
 type Tab = 'home' | 'analytics' | 'integrations' | 'calendar' | 'clips' | 'campaigns' | 'analyzer'
 
 interface Props {
   jobs: JobSummary[]
   running: boolean
+  error: string | null
+  stages: Record<string, { fraction: number; message: string }>
+  activeJobId: string | null
+  activeStage: string | null
   initialSource?: string
-  onRun: (source: string, llm: string, geminiModel: string, captions: string, asrModel: string, captionColor: string) => void
-  onUpload: (file: File, llm: string, geminiModel: string, captions: string, asrModel: string) => void
+  onRun: (source: string, llm: string, geminiModel: string, captions: string, asrModel: string, captionColor: string, generationConfig: GenerationConfig) => void | Promise<unknown>
+  onUpload: (file: File, llm: string, geminiModel: string, captions: string, asrModel: string, generationConfig: GenerationConfig) => void | Promise<unknown>
   onOpenJob: (id: string) => void
+  onDeleteJobs: (ids: string[]) => Promise<void>
   onOpenLoop: () => void
   onOpenQueue: () => void
   onOpenTranscribeQueue: () => void
   onOpenAnalyzer: () => void
 }
 
-export default function RedesignedStudio({ jobs, running, initialSource, onRun, onUpload, onOpenJob, onOpenLoop, onOpenQueue, onOpenTranscribeQueue, onOpenAnalyzer }: Props) {
+export default function RedesignedStudio({ jobs, running, error, stages, activeJobId, activeStage, initialSource, onRun, onUpload, onOpenJob, onDeleteJobs, onOpenLoop, onOpenQueue, onOpenTranscribeQueue, onOpenAnalyzer }: Props) {
   const [tab, setTab] = useState<Tab>('home')
   const [source, setSource] = useState(initialSource || '')
   const [showUpload, setShowUpload] = useState(false)
   const [showMagicModal, setShowMagicModal] = useState(false)
+  const [showCreativeSetup, setShowCreativeSetup] = useState(false)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState('All')
   const [filterStatus, setFilterStatus] = useState('All')
   const [filterActive, setFilterActive] = useState('All')
   const [sortOrder, setSortOrder] = useState('Newest')
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
+  const [selectingProjects, setSelectingProjects] = useState(false)
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
-  const [campaignLoading, setCampaignLoading] = useState(false)
+  const [, setCampaignLoading] = useState(false)
   const loadCampaigns = async () => { setCampaignLoading(true); try { setCampaigns(await api.listCampaigns()) } catch { setCampaigns([]) } finally { setCampaignLoading(false) } }
-  const createCampaign = async () => { const name = window.prompt('Campaign name'); if (!name?.trim()) return; try { await api.createCampaign(name.trim()); await loadCampaigns() } catch (e) { window.alert(e instanceof Error ? e.message : 'Could not create campaign') } }
+  useEffect(() => { if (initialSource) setSource(initialSource) }, [initialSource])
   useEffect(() => { if (tab === 'campaigns' && !campaigns.length) void loadCampaigns() }, [tab])
   const getGreeting = () => { const hour = new Date().getHours(); if (hour < 12) return 'Good Morning'; if (hour < 18) return 'Good Afternoon'; return 'Good Evening'; };
   const nav = [
@@ -43,7 +54,37 @@ export default function RedesignedStudio({ jobs, running, initialSource, onRun, 
     ['campaigns', <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M3 15h6"></path><path d="M6 12v6"></path></svg>, 'Campaigns'],
     ['analyzer', <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19V9"/><path d="M9 19V5"/><path d="M14 19v-7"/><path d="M19 19V3"/></svg>, 'Analyzer']
   ] as const
-  const submit = () => source.trim() && onRun(source.trim(), 'ollama', 'gemini-3.7-flash', 'hormozi', 'large-v3-turbo', 'white')
+  const submit = () => { if (source.trim()) { setShowMagicModal(false); setShowCreativeSetup(true) } }
+  const beginUpload = (file: File) => { setPendingFile(file); setShowMagicModal(false); setShowCreativeSetup(true) }
+  const processWithSetup = async (generationConfig: GenerationConfig) => {
+    if (pendingFile) {
+      await onUpload(pendingFile, 'ollama', 'gemini-3.7-flash', 'hormozi', 'large-v3-turbo', generationConfig)
+      setPendingFile(null)
+    } else {
+      await onRun(source.trim(), 'ollama', 'gemini-3.7-flash', 'hormozi', 'large-v3-turbo', String(generationConfig.captions?.fill || 'white'), generationConfig)
+    }
+    setShowCreativeSetup(false)
+  }
+  const toggleProject = (id: string) => setSelectedProjectIds((current) => {
+    const next = new Set(current)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
+  const deleteSelectedProjects = async () => {
+    const ids = [...selectedProjectIds]
+    if (!ids.length || !confirm(`Delete ${ids.length} selected project${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return
+    try {
+      await onDeleteJobs(ids)
+      setSelectedProjectIds(new Set())
+      setSelectingProjects(false)
+    } catch (deleteError) {
+      alert(deleteError instanceof Error ? deleteError.message : 'Could not delete selected projects.')
+    }
+  }
+
+  if (showCreativeSetup) {
+    return <CreativeSetup source={source} file={pendingFile} onBack={() => { setShowCreativeSetup(false); setPendingFile(null) }} onProcess={processWithSetup} />
+  }
 
   return <div className="new-shell">
     <aside className="new-sidebar">
@@ -59,6 +100,8 @@ export default function RedesignedStudio({ jobs, running, initialSource, onRun, 
     <main className="new-main">
       <header className="new-topbar"><div className="new-breadcrumb">Workspace <span>/</span> {nav.find(n => n[0] === tab)?.[2]}</div><div className="new-top-actions"><button>⌕</button><button>?</button><button className="new-upgrade">Upgrade</button></div></header>
       {tab === 'home' && <section className="new-page new-home" style={{ paddingTop: '24px' }}>
+        {running && <div role="status" style={{ marginBottom: '16px', padding: '12px 16px', borderRadius: '10px', background: '#f0edff', color: '#5b3fd1', fontSize: '13px', fontWeight: 600 }}>Starting processing… Your project will appear here as it progresses.</div>}
+        {error && <div role="alert" style={{ marginBottom: '16px', padding: '12px 16px', borderRadius: '10px', background: '#fff1f2', color: '#be123c', fontSize: '13px' }}>{error}</div>}
 
         {/* === Magic Clips Modal === */}
         {showMagicModal && <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowMagicModal(false)}>
@@ -73,9 +116,9 @@ export default function RedesignedStudio({ jobs, running, initialSource, onRun, 
               <button className="new-primary" style={{ flex: 1, padding: '11px' }} onClick={() => { submit(); setShowMagicModal(false) }} disabled={running || !source.trim()}>{running ? 'Processing…' : 'Create clips'}</button>
               <button className="new-secondary" style={{ margin: 0 }} onClick={() => { setShowUpload(true); setShowMagicModal(false) }}>Upload file</button>
             </div>
-            {showUpload && <input className="new-file" type="file" accept="video/*" autoFocus onChange={e => { const f = e.target.files?.[0]; if (f) onUpload(f, 'ollama', 'gemini-3.7-flash', 'hormozi', 'large-v3-turbo'); setShowUpload(false) }} />}
           </div>
         </div>}
+        {showUpload && <input className="new-file" type="file" accept="video/*" autoFocus onChange={e => { const f = e.target.files?.[0]; if (f) beginUpload(f); setShowUpload(false) }} />}
 
         {/* === Greeting + Service cards === */}
         <div style={{ marginBottom: '28px' }}>
@@ -136,17 +179,19 @@ export default function RedesignedStudio({ jobs, running, initialSource, onRun, 
             <button style={{ padding: '6px 11px', border: '1px solid #e2e1e8', borderRadius: '7px', background: '#fff', fontSize: '12px', color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> Grid
             </button>
+            <button onClick={() => { setSelectingProjects((value) => !value); setSelectedProjectIds(new Set()) }} style={{ padding: '6px 11px', border: '1px solid #e2e1e8', borderRadius: '7px', background: selectingProjects ? '#f0edff' : '#fff', fontSize: '12px', color: selectingProjects ? '#6c4df6' : '#555', cursor: 'pointer', fontWeight: selectingProjects ? 600 : 400 }}>{selectingProjects ? 'Cancel selection' : 'Select projects'}</button>
+            {selectingProjects && <button onClick={() => void deleteSelectedProjects()} disabled={!selectedProjectIds.size} style={{ padding: '6px 11px', border: '1px solid #fecdd3', borderRadius: '7px', background: selectedProjectIds.size ? '#fff1f2' : '#fff', fontSize: '12px', color: selectedProjectIds.size ? '#be123c' : '#aaa', cursor: selectedProjectIds.size ? 'pointer' : 'not-allowed', fontWeight: 600 }}>Delete selected{selectedProjectIds.size ? ` (${selectedProjectIds.size})` : ''}</button>}
           </div>
         </div>
         <ProjectGrid
           jobs={jobs
             .filter(j => !search || (j.title || '').toLowerCase().includes(search.toLowerCase()))
-            .filter(j => filterStatus === 'All' ? true : filterStatus === 'Completed' ? j.rendered : !j.rendered)
+            .filter(j => filterStatus === 'All' ? true : filterStatus === 'Completed' ? (j.completed || j.rendered) : !(j.completed || j.rendered))
             .filter(j => filterType === 'All' ? true : filterType === 'Clips' ? (j.clip_count || 0) > 0 : (j.clip_count || 0) === 0)
             .sort((a, b) => sortOrder === 'Newest' ? (b.id > a.id ? 1 : -1) : (a.id > b.id ? 1 : -1))}
-          onOpenJob={onOpenJob} />
+          onOpenJob={onOpenJob} stages={stages} activeJobId={activeJobId} activeStage={activeStage} selecting={selectingProjects} selectedIds={selectedProjectIds} onToggle={toggleProject} />
       </section>}
-      {tab === 'clips' && <section className="new-page"><PageTitle title="Your clips" sub="All finished clips from your projects" /><ProjectGrid jobs={jobs} onOpenJob={onOpenJob} large /></section>}
+      {tab === 'clips' && <section className="new-page"><PageTitle title="Your clips" sub="All finished clips from your projects" /><ProjectGrid jobs={jobs} onOpenJob={onOpenJob} stages={stages} activeJobId={activeJobId} activeStage={activeStage} large /></section>}
       {tab === 'analytics' && <section className="new-page"><PageTitle title="Analytics" sub="Understand what is working across your content" /><div className="metrics-grid"><Metric label="Total views" value="—" hint="Connect a channel to see data" /><Metric label="Clips published" value={String(jobs.reduce((n, j) => n + (j.clip_count || 0), 0))} hint="Across your projects" /><Metric label="Engagement rate" value="—" hint="No channel connected" /></div><div className="chart-panel"><h2>Performance overview</h2><div className="chart-placeholder"><span>No publishing data yet</span></div></div></section>}
       {tab === 'campaigns' && <section className="new-page"><PageTitle title="Campaigns" sub="Organize videos for every channel and campaign" /><div className="empty-panel"><div className="empty-icon">▤</div><h2>No campaigns yet</h2><p>Create a campaign to group clips by launch, client or channel.</p><button className="new-primary">＋ New campaign</button></div></section>}
       {tab === 'integrations' && <section className="new-page"><PageTitle title="API integrations" sub="Connect the tools you use to publish and automate" /><div className="integration-grid">{[['YouTube','▶','Import videos and publish clips'],['Instagram','◎','Publish reels automatically'],['TikTok','♪','Send clips to your content calendar'],['Webhooks','⌁','Trigger your own workflows']].map(x => <div className="integration-card"><span>{x[1]}</span><h3>{x[0]}</h3><p>{x[2]}</p><button className="new-secondary">Connect</button></div>)}</div></section>}
@@ -171,19 +216,49 @@ function qualityBadge(job: JobSummary): string {
   if (d > 600) return 'HD';
   return 'SD';
 }
-function ProjectGrid({ jobs, onOpenJob, large = false }: { jobs: JobSummary[], onOpenJob: (id: string) => void, large?: boolean }) {
+const PROJECT_STAGES = [
+  ['worker_queued', 'Waiting for local downloader'],
+  ['downloading', 'Downloading'],
+  ['uploading', 'Uploading'],
+  ['ingest', 'Ingest'],
+  ['asr', 'Transcription'],
+  ['diarize', 'Diarization'],
+  ['events', 'Audio / Events'],
+  ['candidates', 'Finding moments'],
+  ['score', 'Scoring'],
+  ['camera', 'Editing / Camera'],
+  ['render', 'Rendering'],
+] as const
+
+function stageLabel(stage?: string | null) {
+  if (stage === 'complete') return 'Complete'
+  return PROJECT_STAGES.find(([id]) => id === stage)?.[1] || stage || 'Waiting to start'
+}
+
+function ProjectGrid({ jobs, onOpenJob, stages, activeJobId, activeStage: liveStageName, selecting = false, selectedIds = new Set<string>(), onToggle, large = false }: { jobs: JobSummary[], onOpenJob: (id: string) => void, stages: Record<string, { fraction: number; message: string }>, activeJobId: string | null, activeStage: string | null, selecting?: boolean, selectedIds?: Set<string>, onToggle?: (id: string) => void, large?: boolean }) {
   return <div className={`project-grid ${large ? 'large' : ''}`}>{jobs.length ? jobs.map(job => {
     const dur = fmtDuration(job.duration_sec);
     const quality = qualityBadge(job);
     const qColor = quality === '4K' ? '#a855f7' : quality === 'HD' ? '#10b981' : '#6b7280';
-    return <button className="project-card" key={job.id} onClick={() => onOpenJob(job.id)}>
+    const activeStage = job.id === activeJobId && liveStageName ? liveStageName : job.current_stage;
+    const liveStage = job.id === activeJobId && activeStage ? stages[activeStage] : undefined;
+    const activeFraction = liveStage?.fraction ?? job.stage_progress;
+    const completedStages = new Set(job.completed_stages || []);
+    const isComplete = job.completed || job.status === 'done';
+    const isFailed = job.status === 'failed';
+    const isActive = !isComplete && !isFailed;
+    const statusColor = isComplete ? '#10b981' : isFailed ? '#e11d48' : '#f59e0b';
+    const canDelete = !isActive;
+    const selected = selectedIds.has(job.id);
+    return <button className="project-card" key={job.id} title={selecting && !canDelete ? 'Active projects cannot be deleted' : undefined} onClick={() => selecting ? (canDelete && onToggle?.(job.id)) : onOpenJob(job.id)} style={selecting ? { outline: selected ? '2px solid #6c4df6' : '1px solid #e2e1e8', outlineOffset: '-1px', opacity: canDelete ? 1 : 0.62, cursor: canDelete ? 'pointer' : 'not-allowed' } : undefined}>
       <div className="project-thumb" style={job.thumbnail_url ? { backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.55) 0%, transparent 40%, transparent 55%, rgba(0,0,0,0.72) 100%), url("${job.thumbnail_url}")` } : { background: 'linear-gradient(135deg,#29283a,#7770a1)' }}>
+        {selecting && <span style={{ position:'absolute', top:'8px', left:'8px', width:'18px', height:'18px', borderRadius:'50%', background: selected ? '#6c4df6' : '#fff', color: selected ? '#fff' : '#aaa', display:'grid', placeItems:'center', fontSize:'12px', fontWeight:700 }}>{selected ? '✓' : ''}</span>}
         {/* Top-left: clip count */}
         {(job.clip_count || 0) > 0 && <span style={{ position:'absolute', top:'8px', left:'8px', padding:'3px 8px', borderRadius:'5px', background:'rgba(108,77,246,0.92)', color:'#fff', fontSize:'10px', fontWeight:700, backdropFilter:'blur(4px)' }}>+{job.clip_count} Clips</span>}
         {/* Top-right: quality badge */}
-        <span style={{ position:'absolute', top:'8px', right:'8px', padding:'3px 7px', borderRadius:'5px', background: qColor, color:'#fff', fontSize:'9px', fontWeight:800, letterSpacing:'0.04em' }}>{quality}</span>
+        <span style={{ position:'absolute', top:'8px', right:'8px', padding:'3px 7px', borderRadius:'5px', background: isActive ? '#6c4df6' : isFailed ? '#e11d48' : qColor, color:'#fff', fontSize:'9px', fontWeight:800, letterSpacing:'0.04em' }}>{isActive ? 'PROCESSING' : isFailed ? 'FAILED' : quality}</span>
         {/* Center play */}
-        <span style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', color:'rgba(255,255,255,0.7)' }}>▶</span>
+        <span style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', color:'rgba(255,255,255,0.7)' }}>{isActive ? '◌' : '▶'}</span>
         {/* Bottom: title + duration */}
         <div style={{ position:'absolute', bottom:0, left:0, right:0, padding:'8px 9px 7px', display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:'6px' }}>
           <span style={{ fontSize:'11px', color:'#fff', fontWeight:600, lineHeight:1.3, overflow:'hidden', display:'-webkit-box', WebkitBoxOrient:'vertical', WebkitLineClamp:2, textShadow:'0 1px 4px rgba(0,0,0,0.6)' }}>{job.title || 'Untitled project'}</span>
@@ -191,12 +266,17 @@ function ProjectGrid({ jobs, onOpenJob, large = false }: { jobs: JobSummary[], o
         </div>
       </div>
       <div className="project-info" style={{ padding:'8px 10px 10px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-        <span style={{ fontSize:'10px', color: job.rendered ? '#10b981' : '#f59e0b', fontWeight:600, display:'flex', alignItems:'center', gap:'4px' }}>
-          <span style={{ width:'6px', height:'6px', borderRadius:'50%', background: job.rendered ? '#10b981' : '#f59e0b', display:'inline-block' }} />
-          {job.rendered ? 'Completed' : 'Processing'}
+        <span style={{ fontSize:'10px', color: statusColor, fontWeight:600, display:'flex', alignItems:'center', gap:'4px' }}>
+          <span style={{ width:'6px', height:'6px', borderRadius:'50%', background: statusColor, display:'inline-block' }} />
+          {isComplete ? 'Completed' : isFailed ? `Failed · ${stageLabel(activeStage)}` : stageLabel(activeStage)}
         </span>
-        <span style={{ fontSize:'10px', color:'#9a9ba4' }}>{job.clip_count || 0} clips</span>
+        {isComplete && <span style={{ fontSize:'10px', color:'#9a9ba4' }}>{job.clip_count} clips</span>}
       </div>
+      {isActive && <div style={{ padding:'0 10px 10px', textAlign:'left' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:'10px', color:'#6c4df6', marginBottom:'6px' }}><span>{liveStage?.message || stageLabel(activeStage)}</span>{typeof activeFraction === 'number' && activeFraction >= 0 && <b>{Math.round(activeFraction * 100)}%</b>}</div>
+        <div style={{ display:'flex', gap:'3px', flexWrap:'wrap' }}>{PROJECT_STAGES.map(([id, label]) => <span key={id} title={label} style={{ width:'7px', height:'7px', borderRadius:'50%', background: completedStages.has(id) ? '#10b981' : activeStage === id ? '#6c4df6' : '#e4e3ea' }} />)}</div>
+      </div>}
+      {isFailed && job.error && <div style={{ padding:'0 10px 10px', color:'#be123c', fontSize:'10px', textAlign:'left', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{job.error}</div>}
     </button>
   }) : <div className="empty-projects">Your generated videos will appear here.</div>}
   </div>

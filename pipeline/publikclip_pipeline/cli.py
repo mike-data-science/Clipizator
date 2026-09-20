@@ -27,13 +27,17 @@ def _stages() -> list[queue.Stage]:
     from .ingest.stage import IngestStage
     from .render.stage import RenderStage
     from .scoring.stage import ScoreStage
+    from .source_analysis.stage import SourceAnalysisStage
+    from .semantic_compression_stage import SemanticCompressionStage
 
     return [
         IngestStage(),
         AsrStage(),
         DiarizeStage(),
         EventsStage(),
+        SourceAnalysisStage(),
         CandidatesStage(),
+        SemanticCompressionStage(),
         ScoreStage(),
         CameraStage(),
         RenderStage(),
@@ -93,6 +97,9 @@ def cmd_resume(args: argparse.Namespace) -> int:
         new_json = json.dumps(settings.to_json())
         with queue._connect() as conn:  # noqa: SLF001 — CLI is a queue friend
             conn.execute("UPDATE jobs SET settings_json = ? WHERE id = ?", (new_json, job.id))
+        from . import generation_config
+
+        generation_config.update_supported_settings(job.id, settings)
         job = queue.get_job(args.job_id)
     return _execute(job, args.jsonl)
 

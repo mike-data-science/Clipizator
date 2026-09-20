@@ -1,6 +1,9 @@
-"""Candidates stage: build every free channel, weigh them into the interest
-curve, extract ~35 sentence-snapped candidate windows. No LLM spend here —
-this count is the cost gate for T1/T2."""
+"""Candidate discovery stage.
+
+Clip Selection v2 constructs and ranks candidates from the persisted story
+timeline. Older jobs without that evidence retain the interest-curve/window
+fallback, so existing artifacts remain resumable.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +30,7 @@ def detect_scenes(media_path: str, progress=None) -> list[float]:
 
 class CandidatesStage(Stage):
     name = "candidates"
-    schema_version = 1
+    schema_version = 2
 
     def run(self, ctx: StageContext) -> dict:
         import numpy as np
@@ -39,6 +42,7 @@ class CandidatesStage(Stage):
         ingest = prior.get("ingest")
         diarize = prior.get("diarize")
         events = prior.get("events")
+        source_analysis = prior.get("source_analysis") or {}
         if not (ingest and diarize and events):
             raise StageError("Candidates need ingest + diarize + events outputs.")
 
@@ -60,15 +64,23 @@ class CandidatesStage(Stage):
             
         scene_detector_outcome = "success_no_detections"
         scene_detector_error = None
-        try:
-            scene_times = detect_scenes(str(media))
-            if scene_times:
-                scene_detector_outcome = "success_with_detections"
-        except Exception as err:  # noqa: BLE001 — scenes are a minor channel; degrade
-            scene_times = []
-            scene_detector_outcome = "unavailable"
-            scene_detector_error = f"{type(err).__name__}: {err}"
-        (ctx.job_dir / "scenes.json").write_text(json.dumps(scene_times))
+        scenes_path = ctx.job_dir / "scenes.json"
+        if scenes_path.exists():
+            try:
+                scene_times = [float(item) for item in json.loads(scenes_path.read_text())]
+                scene_detector_outcome = "success_with_detections" if scene_times else "success_no_detections"
+            except (OSError, TypeError, ValueError):
+                scene_times = []
+        else:
+            try:
+                scene_times = detect_scenes(str(media))
+                if scene_times:
+                    scene_detector_outcome = "success_with_detections"
+            except Exception as err:  # noqa: BLE001 — scenes are a minor channel; degrade
+                scene_times = []
+                scene_detector_outcome = "unavailable"
+                scene_detector_error = f"{type(err).__name__}: {err}"
+            scenes_path.write_text(json.dumps(scene_times))
 
         ctx.emit(0.6, "Building interest curve…")
         channels = {
@@ -83,6 +95,37 @@ class CandidatesStage(Stage):
             "lexical": curve_mod.lexical_channel(segments, n),
         }
         curve, effective_weights = curve_mod.interest_curve(channels)
+
+        story_semantics = source_analysis.get("story_semantics") if isinstance(source_analysis, dict) else None
+        source_editing = source_analysis.get("source_editing") if isinstance(source_analysis, dict) else None
+        if isinstance(story_semantics, dict) and isinstance(source_editing, dict):
+            from .selection import build_selection, debug_artifact
+
+            ctx.emit(0.8, "Constructing story-aware candidate portfolio…")
+            selection = build_selection(
+                story_semantics=story_semantics, source_editing=source_editing,
+                rms=[float(item) for item in curves.get("rms") or []],
+                grid_sec=float(curves.get("grid_sec") or .1),
+            )
+            if selection is not None:
+                compact_debug = debug_artifact(selection)
+                (ctx.job_dir / "clip_selection_v2.json").write_text(json.dumps(compact_debug, ensure_ascii=False, indent=1))
+                (ctx.job_dir / "interest_curve.json").write_text(
+                    json.dumps({"per_sec": np.round(curve, 4).tolist()})
+                )
+                return {
+                    "selection_version": "clip-selection-v2", "candidates": selection["portfolio"],
+                    "portfolio": selection["portfolio"], "selection_debug": compact_debug,
+                    "count": selection["post_dedupe_count"],
+                    "broad_candidate_count": selection["broad_candidate_count"],
+                    "post_dedupe_count": selection["post_dedupe_count"],
+                    "final_count": selection["final_count"],
+                    "quality_bucket_counts": selection["quality_bucket_counts"],
+                    "effective_weights": effective_weights, "scene_count": len(scene_times),
+                    "scene_detector_outcome": scene_detector_outcome,
+                    "scene_detector_error": scene_detector_error,
+                    "heatmap_present": bool(ingest.get("heatmap")),
+                }
 
         ctx.emit(0.8, "Extracting candidate windows…")
         candidates = windows_mod.extract(curve, channels, segments, duration)

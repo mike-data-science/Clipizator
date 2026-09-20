@@ -42,7 +42,7 @@ def _extract_wav(media: Path, dst: Path, sr: int) -> None:
 
 class EventsStage(Stage):
     name = "events"
-    schema_version = 2  # v2: measured PANNs thresholds (v1 heard nothing)
+    schema_version = 3  # v3: retain separate music/SFX evidence for Video DNA
 
     def artifacts_ok(self, ctx: StageContext, data: dict) -> bool:
         return (ctx.job_dir / "curves.json").exists()
@@ -76,6 +76,7 @@ class EventsStage(Stage):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         bench: dict[str, float] = {}
         events: list[dict] = []
+        raw_audio_observations: list[dict] = []
 
         y16k, _ = librosa.load(str(audio16), sr=16000, mono=True)
         duration = len(y16k) / 16000.0
@@ -120,13 +121,30 @@ class EventsStage(Stage):
         probs_by_type, fps = panns_channel.framewise_probs(
             pmodel, y32k, device,
             progress=lambda f: ctx.emit(0.45 + f * 0.35, "Detecting audio events…"),
+            class_map={**panns_channel.CLASS_MAP, **panns_channel.INTELLIGENCE_CLASS_MAP},
         )
         del pmodel
         import gc
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        legacy_types = set(panns_channel.CLASS_MAP.values())
         for etype, probs in probs_by_type.items():
+            if etype not in legacy_types:
+                enter, stay = panns_channel.INTELLIGENCE_THRESHOLDS[etype]
+                labels = sorted(name for name, mapped in panns_channel.INTELLIGENCE_CLASS_MAP.items() if mapped == etype)
+                for start, end, peak in post.postprocess(probs, fps, enter=enter, stay=stay):
+                    raw_audio_observations.append({
+                        "id": f"panns-audio-{len(raw_audio_observations) + 1:03d}",
+                        "type": "music" if etype == "music" else "sfx",
+                        "subtype": None if etype == "music" else etype.split(":", 1)[1],
+                        "start": round(start, 3), "end": round(end, 3),
+                        "confidence": round(min(1.0, float(peak) / 0.5), 3),
+                        "peak_probability": round(float(peak), 5),
+                        "source_detector_labels": labels,
+                        "model_or_detector": "PANNs Cnn14_DecisionLevelMax/AudioSet",
+                    })
+                continue
             enter, stay = panns_channel.THRESHOLDS.get(etype, (0.15, 0.08))
             for start, end, peak in post.postprocess(probs, fps, enter=enter, stay=stay):
                 events.append(
@@ -181,6 +199,7 @@ class EventsStage(Stage):
 
         return {
             "timeline": timeline,
+            "raw_audio_observations": raw_audio_observations,
             "counts": by_type,
             "curves_path": str(curves_path),
             "arousal_source": arousal_source,
