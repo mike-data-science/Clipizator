@@ -300,7 +300,7 @@ def check_ollama():
 
 @app.get("/api/jobs")
 def list_jobs():
-    from studio_jobs import list_rendered_jobs
+    from backend.studio_jobs import list_rendered_jobs
 
     # One local database read; no network metadata lookups or per-job migrations.
     with queue._connect() as conn:
