@@ -81,6 +81,15 @@ def context_for_clip(job_dir: Path, clip_idx: int, pad: float = 45.0) -> dict:
                 t = json.loads(trajectory_path.read_text())
                 trajectory = {"fps": t.get("fps", 25), "frames": t.get("frames", [])}
 
+    ai_edit_plan = None
+    plan_path = job_dir / "ai_edit_plan_v1.json"
+    if plan_path.exists():
+        plan = json.loads(plan_path.read_text())
+        ai_edit_plan = next(
+            (item for item in plan.get("clips") or [] if int(item.get("clip_index", -1)) == clip_idx),
+            None,
+        )
+
     return {
         "clip_index": clip_idx,
         "window": {"start": win_a, "end": win_b},
@@ -94,6 +103,7 @@ def context_for_clip(job_dir: Path, clip_idx: int, pad: float = 45.0) -> dict:
         "rms_grid": grid,
         "events": clip_events,
         "auto_cuts": cuts,
+        "ai_edit_plan": ai_edit_plan,
         "run_caption_preset": _load_stage(job_dir, "render").get("caption_preset", "hormozi")
         if (job_dir / "render.json").exists()
         else "hormozi",

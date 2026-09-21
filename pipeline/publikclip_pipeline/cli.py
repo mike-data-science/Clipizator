@@ -29,6 +29,9 @@ def _stages() -> list[queue.Stage]:
     from .scoring.stage import ScoreStage
     from .source_analysis.stage import SourceAnalysisStage
     from .semantic_compression_stage import SemanticCompressionStage
+    from .safe_edit_execution_stage import SafeEditExecutionStage
+    from .visual_join_treatment_stage import VisualJoinTreatmentStage
+    from .ai_edit_plan_stage import AiEditPlanStage
 
     return [
         IngestStage(),
@@ -38,8 +41,11 @@ def _stages() -> list[queue.Stage]:
         SourceAnalysisStage(),
         CandidatesStage(),
         SemanticCompressionStage(),
+        SafeEditExecutionStage(),
         ScoreStage(),
         CameraStage(),
+        VisualJoinTreatmentStage(),
+        AiEditPlanStage(),
         RenderStage(),
     ]
 

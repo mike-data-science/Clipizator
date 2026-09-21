@@ -16,14 +16,15 @@ def fixture(texts, gaps=None, roles=None, protected=None):
     if protected: candidate["setup_context_unit_ids"]=[protected]
     return build_plan(candidates=[candidate],segments=[{"words":words}],story_semantics=story)["candidates"][0]
 
-def test_filler_removed_and_like_semantic_preserved():
+def test_tiny_intra_sentence_filler_becomes_optional_and_like_semantic_preserved():
     plan=fixture(["I uh like boxing"]); reasons=[d["reason"] for d in plan["decisions"]]
     assert "filler" in reasons
+    assert any(d["reason"] == "filler" and d["action"] == "optional_keep" for d in plan["decisions"])
     assert not any(d["action"] == "remove" and "like" in [w["text"].casefold() for w in d["affected_transcript_tokens"]] for d in plan["decisions"])
 
 def test_false_start_and_stable_ids():
     a=fixture(["I had I had a dog"]); b=fixture(["I had I had a dog"])
-    assert any(d["reason"] == "false_start" for d in a["decisions"])
+    assert any(d["reason"] == "false_start" and d["action"] == "remove" for d in a["decisions"])
     assert [d["decision_id"] for d in a["decisions"]] == [d["decision_id"] for d in b["decisions"]]
 
 def test_dramatic_reveal_pause_and_speaker_handoff_are_kept():
@@ -46,3 +47,34 @@ def test_dead_air_is_removed_but_source_highlight_is_conservative():
     words=[word("The",0,300),word("answer",300,600),word("is",3300,3600),word("clear",3600,3900)]
     result=build_plan(candidates=[candidate],segments=[{"words":words}],story_semantics=story)["candidates"][0]
     assert not any(d["action"] == "remove" and d["reason"] == "dead_air" for d in result["decisions"])
+
+
+def test_terminal_removal_has_no_right_join_range():
+    plan = fixture(["The answer uh"])
+    terminal_filler = next(d for d in plan["decisions"] if d["reason"] == "filler")
+    assert terminal_filler["join_risk"]["right_retained_range"] is None
+
+
+def test_clustered_micro_fillers_are_suppressed():
+    plan = fixture(["You know and you know we agree"])
+    fillers = [d for d in plan["decisions"] if d["reason"] == "filler"]
+    assert len(fillers) == 2
+    assert all(d["action"] == "optional_keep" for d in fillers)
+    assert all(d["micro_cut_suppressed"] and d["suppression_reason"] == "clustered_small_fillers" for d in fillers)
+
+
+def test_high_risk_filler_join_is_downgraded():
+    candidate = {"candidate_id":"c1","story_id":"s1","semantic_unit_ids":["u0"],"start_ms":0,"end_ms":900}
+    story = {"story_segments":[{"story_id":"s1","semantic_units":[{"semantic_unit_id":"u0","start_ms":0,"end_ms":900,"primary_story_role":"claim"}]}]}
+    words = [word("Well",0,300,0), word("uh",300,600,0), word("okay",600,900,1)]
+    plan = build_plan(candidates=[candidate],segments=[{"words":words}],story_semantics=story)["candidates"][0]
+    filler = next(d for d in plan["decisions"] if d["reason"] == "filler")
+    assert filler["action"] == "optional_keep"
+    assert filler["cut_risk"] == "high"
+
+
+def test_natural_speech_with_filler_can_remain_unchanged():
+    plan = fixture(["I think you know we can do this"])
+    assert not plan["removed_ranges"]
+    filler = next(d for d in plan["decisions"] if d["reason"] == "filler")
+    assert filler["action"] == "optional_keep"

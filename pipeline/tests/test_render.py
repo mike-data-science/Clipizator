@@ -136,6 +136,39 @@ def test_render_watchdog_allows_advancing_frames():
 
 
 @pytest.mark.slow
+def test_render_two_retained_ranges_keeps_av_in_sync(tmp_path, monkeypatch):
+    src = tmp_path / "multi-source.mp4"
+    subprocess.run([
+        ffmpeg_bin.ffmpeg(), "-nostdin", "-v", "error", "-y",
+        "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=4",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=4",
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src),
+    ], check=True, timeout=60)
+    monkeypatch.setattr(renderer, "OUT_W", 360)
+    monkeypatch.setattr(renderer, "OUT_H", 640)
+    monkeypatch.setattr(renderer, "cuda_scale_available", lambda: False)
+    monkeypatch.setattr(renderer, "nvenc_available", lambda: False)
+    monkeypatch.setattr(renderer, "videotoolbox_available", lambda: False)
+    ranges = [(0.0, 1.4), (2.0, 4.0)]
+    duration = sum(b - a for a, b in ranges)
+    trajectory = {"fps": 25, "frames": [[20, 0, 180, 240]] * int(duration * 25)}
+    out = tmp_path / "multi.mp4"
+    renderer.render_clip(
+        str(src), out, 0.0, 4.0, trajectory, None, None,
+        src_w=320, src_h=240, retained_ranges=ranges, crossfades_ms=[20], timeout=90,
+    )
+    check = renderer.verify_output(out, duration)
+    assert check["ok"], check
+    probe = subprocess.run([
+        ffmpeg_bin.ffprobe(), "-v", "error", "-show_entries", "stream=codec_type,duration",
+        "-of", "json", str(out),
+    ], check=True, capture_output=True, text=True, timeout=30)
+    streams = json.loads(probe.stdout)["streams"]
+    durations = {s["codec_type"]: float(s["duration"]) for s in streams}
+    assert abs(durations["video"] - durations["audio"]) < .08
+
+
+@pytest.mark.slow
 def test_cuda_render_dynamic_zoom(tmp_path):
     """Regression: a changing crop size previously froze the software scaler."""
     if not renderer.cuda_scale_available() or not renderer.nvenc_available():

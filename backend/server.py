@@ -211,6 +211,7 @@ def _stages():
     from publikclip_pipeline.scoring.stage import ScoreStage
     from publikclip_pipeline.source_analysis.stage import SourceAnalysisStage
     from publikclip_pipeline.semantic_compression_stage import SemanticCompressionStage
+    from publikclip_pipeline.safe_edit_execution_stage import SafeEditExecutionStage
 
     return [
         IngestStage(),
@@ -220,6 +221,7 @@ def _stages():
         SourceAnalysisStage(),
         CandidatesStage(),
         SemanticCompressionStage(),
+        SafeEditExecutionStage(),
         ScoreStage(),
         CameraStage(),
         RenderStage(),

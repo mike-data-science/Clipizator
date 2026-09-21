@@ -233,8 +233,15 @@ def render_clip(
     src_h: int = 1080,
     timeout: float = 1800.0,
     progress: Callable[[float], None] | None = None,
+    retained_ranges: list[tuple[float, float]] | None = None,
+    crossfades_ms: list[int] | None = None,
 ) -> None:
-    duration = clip_end - clip_start
+    ranges = retained_ranges or [(clip_start, clip_end)]
+    if not ranges or any(b <= a for a, b in ranges) or any(a2 < b1 for (_, b1), (a2, _) in zip(ranges, ranges[1:])):
+        raise ValueError("retained ranges must be ordered, non-overlapping, and positive")
+    if ranges[0][0] < clip_start or ranges[-1][1] > clip_end:
+        raise ValueError("retained ranges must stay inside the clip")
+    duration = sum(b - a for a, b in ranges)
     boxes = crop_boxes(trajectory["frames"], src_w, src_h)
     if not boxes:
         boxes = [(src_h * 9 // 16 // 2 * 2, src_h - src_h % 2, 0, 0)]
@@ -283,21 +290,50 @@ def render_clip(
         else:
             vcodec = ["-c:v", "libx264", "-preset", "medium", "-crf", str(X264_CRF)]
 
-    args = [
-        ffmpeg_bin.ffmpeg(), "-nostdin", "-y", "-v", "error",
-        *hwaccel_args,
-        "-ss", f"{clip_start:.3f}", "-t", f"{duration:.3f}",
-        "-i", media_path,
-        "-vf", ",".join(vf_parts),
-        "-af", f"loudnorm=I={lufs}:TP={true_peak}:LRA=11",
-        *vcodec,
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-        "-movflags", "+faststart",
-        "-map_metadata", "-1",  # metadata scrub (openshorts ffmpeg_utils)
-        "-progress", "pipe:1", "-nostats",
-        str(out_path),
-    ]
+    if ranges == [(clip_start, clip_end)]:
+        args = [
+            ffmpeg_bin.ffmpeg(), "-nostdin", "-y", "-v", "error",
+            *hwaccel_args,
+            "-ss", f"{clip_start:.3f}", "-t", f"{duration:.3f}",
+            "-i", media_path,
+            "-vf", ",".join(vf_parts),
+            "-af", f"loudnorm=I={lufs}:TP={true_peak}:LRA=11",
+            *vcodec,
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            "-movflags", "+faststart", "-map_metadata", "-1",
+            "-progress", "pipe:1", "-nostats", str(out_path),
+        ]
+    else:
+        span_a, span_b = ranges[0][0], ranges[-1][1]
+        graph: list[str] = []
+        for i, (a, b) in enumerate(ranges):
+            ra, rb = a - span_a, b - span_a
+            graph.append(f"[0:v]trim=start={ra:.3f}:end={rb:.3f},setpts=PTS-STARTPTS[v{i}]")
+            graph.append(f"[0:a]atrim=start={ra:.3f}:end={rb:.3f},asetpts=PTS-STARTPTS[a{i}]")
+        graph.append("".join(f"[v{i}]" for i in range(len(ranges))) + f"concat=n={len(ranges)}:v=1:a=0[vc]")
+        audio_label = "a0"
+        fades = crossfades_ms or []
+        for i in range(1, len(ranges)):
+            output_label = f"aj{i}"
+            fade_ms = max(0, min(80, int(fades[i - 1] if i - 1 < len(fades) else 0)))
+            if fade_ms:
+                # No overlap: adjacent short fades suppress discontinuities
+                # without smearing separate spoken words or shortening audio.
+                graph.append(f"[{audio_label}][a{i}]acrossfade=d={fade_ms / 1000:.3f}:o=0:c1=tri:c2=tri[{output_label}]")
+            else:
+                graph.append(f"[{audio_label}][a{i}]concat=n=2:v=0:a=1[{output_label}]")
+            audio_label = output_label
+        graph.append(f"[vc]{','.join(vf_parts)}[vo]")
+        graph.append(f"[{audio_label}]loudnorm=I={lufs}:TP={true_peak}:LRA=11[ao]")
+        args = [
+            ffmpeg_bin.ffmpeg(), "-nostdin", "-y", "-v", "error", *hwaccel_args,
+            "-ss", f"{span_a:.3f}", "-t", f"{span_b - span_a:.3f}", "-i", media_path,
+            "-filter_complex", ";".join(graph), "-map", "[vo]", "-map", "[ao]",
+            *vcodec, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            "-shortest", "-movflags", "+faststart", "-map_metadata", "-1",
+            "-progress", "pipe:1", "-nostats", str(out_path),
+        ]
     _run_ffmpeg(args, duration, timeout, progress)
     cmd_path.unlink(missing_ok=True)
 
@@ -319,9 +355,15 @@ def verify_output(out_path: Path, expected_duration: float) -> dict:
     has_a = any(s.get("codec_type") == "audio" for s in streams)
     duration = float(info.get("format", {}).get("duration", 0.0))
     video = next((s for s in streams if s.get("codec_type") == "video"), {})
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), {})
+    video_duration = float(video.get("duration", duration) or duration)
+    audio_duration = float(audio.get("duration", duration) or duration)
+    av_sync_delta = abs(video_duration - audio_duration)
     return {
-        "ok": has_v and has_a and abs(duration - expected_duration) < 1.5,
+        "ok": has_v and has_a and abs(duration - expected_duration) < 1.5 and av_sync_delta < .12,
         "duration": duration,
+        "video_duration": video_duration, "audio_duration": audio_duration,
+        "av_sync_delta": av_sync_delta,
         "width": video.get("width"),
         "height": video.get("height"),
     }

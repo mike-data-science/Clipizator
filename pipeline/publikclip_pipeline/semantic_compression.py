@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib, time
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 FILLERS = {"uh", "um", "er", "erm", "eh", "äh", "ah", "hmm"}
 REASONS = {"filler", "hesitation", "false_start", "repeated_phrase", "self_correction", "redundant_sentence", "dead_air", "low_information_bridge", "tangent", "repeated_context", "optional_detail", "dramatic_pause", "reveal_pause", "reaction", "speaker_handoff", "meaning_required", "payoff_required", "hook_required", "uncertain"}
 
@@ -38,7 +38,7 @@ def _join(left,right,editing):
     same=not left or not right or left.get("speaker")==right.get("speaker")
     visual=any(abs(int(e.get("timestamp_ms",e.get("start_ms",0)) or 0)-(left or {}).get("end_ms",0))<=250 for k in ("cuts","transitions","pattern_interrupts","reframes","zooms") for e in editing.get(k) or [])
     sentence=bool(left and right and left["text"][-1:] not in ".?!" and right["text"][:1].islower())
-    return {"semantic_join_quality":"high" if same and not sentence else "medium" if same else "low","audio_join_risk":"low" if same else "high","visual_jump_risk":"medium" if visual else "low","speaker_consistency":same,"sentence_join_risk":sentence,"requires_visual_cover":bool(visual or not same),"requires_audio_crossfade":not same,"left_retained_range":[left["start_ms"],left["end_ms"]] if left else None,"right_retained_range":[right["start_ms"],right["end_ms"] if right else None],"speaker_before":left.get("speaker") if left else None,"speaker_after":right.get("speaker") if right else None}
+    return {"semantic_join_quality":"high" if same and not sentence else "medium" if same else "low","audio_join_risk":"low" if same else "high","visual_jump_risk":"medium" if visual else "low","speaker_consistency":same,"sentence_join_risk":sentence,"requires_visual_cover":bool(visual or not same),"requires_audio_crossfade":not same,"left_retained_range":[left["start_ms"],left["end_ms"]] if left else None,"right_retained_range":[right["start_ms"],right["end_ms"]] if right else None,"speaker_before":left.get("speaker") if left else None,"speaker_after":right.get("speaker") if right else None}
 
 def _pause(left,right,units,candidate):
     if left.get("speaker")!=right.get("speaker"): return "keep","speaker_handoff",.96
@@ -46,6 +46,79 @@ def _pause(left,right,units,candidate):
     if after and (after.get("semantic_unit_id") in protected or after.get("primary_story_role") in {"reveal","payoff"}): return "keep","reveal_pause",.9
     if (before and before.get("primary_story_role") in {"hook","question","conflict","surprise"}) or (after and after.get("primary_story_role") in {"reveal","payoff","reaction"}): return "keep","dramatic_pause",.84
     return ("remove","dead_air",.72) if right["start_ms"]-left["end_ms"]>=900 else ("optional_keep","hesitation",.58)
+
+def _cut_value_and_cost(decision, left, right, editing):
+    """Small deterministic guard against low-value conversational micro-cuts."""
+    join = _join(left, right, editing)
+    duration = decision["end_ms"] - decision["start_ms"]
+    reason = decision["reason"]
+    benefit = {
+        "false_start": .98, "repeated_phrase": .92, "self_correction": .85,
+        "dead_air": .84, "tangent": .82, "redundant_sentence": .78,
+        "filler": .18,
+    }.get(reason, .45)
+    if reason == "filler":
+        benefit += min(.22, duration / 2_000)
+    elif reason == "dead_air":
+        benefit += min(.16, duration / 5_000)
+    intra_sentence = bool(join["sentence_join_risk"])
+    awkward = bool(
+        intra_sentence and left and right and (
+            left["text"].rstrip().endswith((",", ";", ":"))
+            or right["norm"] in {"the", "a", "an", "and", "but", "he", "she", "it", "they", "we", "i", "you"}
+        )
+    )
+    cost = 0.0
+    if duration <= 400: cost += .38
+    elif duration <= 650: cost += .18
+    if intra_sentence: cost += .22
+    if awkward: cost += .38
+    if left and right and left.get("speaker") == right.get("speaker"): cost += .08
+    if join["audio_join_risk"] == "high": cost += .42
+    if join["visual_jump_risk"] == "medium": cost += .12
+    # A verified restart is materially more valuable than an ordinary filler.
+    if reason == "false_start":
+        cost -= .16
+    return round(benefit, 3), round(max(0, cost), 3), join, intra_sentence, awkward
+
+def _suppress_micro_cut_clusters(decisions):
+    """Downgrade nearby small filler cuts before they turn one clause into jump cuts."""
+    fillers = [d for d in decisions if d["action"] == "remove" and d["reason"] == "filler" and d["end_ms"] - d["start_ms"] <= 650]
+    cluster = []
+    for decision in fillers:
+        if cluster and decision["start_ms"] - cluster[-1]["end_ms"] > 1200:
+            if len(cluster) >= 2:
+                for item in cluster:
+                    item.update({"action": "optional_keep", "micro_cut_suppressed": True, "suppression_reason": "clustered_small_fillers"})
+            cluster = []
+        cluster.append(decision)
+    if len(cluster) >= 2:
+        for item in cluster:
+            item.update({"action": "optional_keep", "micro_cut_suppressed": True, "suppression_reason": "clustered_small_fillers"})
+
+def _apply_cut_value_gates(decisions, words, editing):
+    _suppress_micro_cut_clusters(decisions)
+    for decision in decisions:
+        if decision["action"] not in {"remove", "optional_keep"}:
+            continue
+        left = next((w for w in reversed(words) if w["end_ms"] <= decision["start_ms"]), None)
+        right = next((w for w in words if w["start_ms"] >= decision["end_ms"]), None)
+        value, cost, join, intra_sentence, awkward = _cut_value_and_cost(decision, left, right, editing)
+        decision.update({
+            "cut_value": value, "cut_cost": cost, "micro_cut_suppressed": bool(decision.get("micro_cut_suppressed")),
+            "join_risk": join, "desired_semantic_cut_ms": decision["start_ms"],
+            "nearest_word_boundary": {"before_ms": left["end_ms"] if left else decision["start_ms"], "after_ms": right["start_ms"] if right else decision["end_ms"]},
+            "speech_active_at_cut": bool(left and right), "visual_change_near_cut": join["visual_jump_risk"] != "low",
+            "source_cut_nearby": join["visual_jump_risk"] == "medium",
+            "recommended_cut_window_ms": [max(0, decision["start_ms"] - 80), decision["end_ms"] + 80],
+            "cut_risk": "high" if join["semantic_join_quality"] == "low" else "medium" if join["semantic_join_quality"] != "high" else "low",
+        })
+        if decision["action"] != "remove":
+            continue
+        high_risk = decision["cut_risk"] == "high"
+        low_value = value - cost < .30
+        if (decision["reason"] == "filler" and (low_value or intra_sentence or awkward or high_risk)) or (high_risk and decision["reason"] not in {"false_start", "repeated_phrase"}):
+            decision.update({"action": "optional_keep", "micro_cut_suppressed": True, "suppression_reason": "low_value_intra_sentence" if intra_sentence else "low_value_cut"})
 
 def _candidate(candidate,segments,story,editing):
     start,end=int(candidate["start_ms"]),int(candidate["end_ms"]); wanted=set(candidate.get("semantic_unit_ids") or []); units=[u for u in story.get("semantic_units") or [] if u.get("semantic_unit_id") in wanted]
@@ -83,17 +156,17 @@ def _candidate(candidate,segments,story,editing):
     for unit in units:
         if conservative or unit["semantic_unit_id"] in protected or unit.get("evidence",{}).get("relation_to_previous")!="tangent": continue
         uw=[w for w in words if unit["start_ms"]<=w["start_ms"]<=unit["end_ms"]]; decisions.append(_decision(candidate["candidate_id"],unit["start_ms"],unit["end_ms"],"remove","tangent",.8,[{"detector":"story_relation","relationship":"tangent"}],[unit["semantic_unit_id"]],uw,["verify_payoff_context"])); remove.append((unit["start_ms"],unit["end_ms"]))
-    decisions.sort(key=lambda d:(d["start_ms"],d["end_ms"],d["decision_id"])); removed=_merge(remove); retained=[]; cursor=start
+    decisions.sort(key=lambda d:(d["start_ms"],d["end_ms"],d["decision_id"]))
+    _apply_cut_value_gates(decisions, words, editing)
+    removed=_merge((d["start_ms"], d["end_ms"]) for d in decisions if d["action"] == "remove"); retained=[]; cursor=start
     for a,b in removed:
         if cursor<a: retained.append((cursor,a))
         cursor=max(cursor,b)
     if cursor<end: retained.append((cursor,end))
-    for d in decisions:
-        if d["action"]!="remove": continue
-        left=next((w for w in reversed(words) if w["end_ms"]<=d["start_ms"]),None); right=next((w for w in words if w["start_ms"]>=d["end_ms"]),None); join=_join(left,right,editing); d["join_risk"]=join; d.update({"desired_semantic_cut_ms":d["start_ms"],"nearest_word_boundary":{"before_ms":left["end_ms"] if left else start,"after_ms":right["start_ms"] if right else end},"speech_active_at_cut":bool(left and right),"visual_change_near_cut":join["visual_jump_risk"]!="low","source_cut_nearby":join["visual_jump_risk"]=="medium","recommended_cut_window_ms":[max(start,d["start_ms"]-80),min(end,d["end_ms"]+80)],"cut_risk":"high" if join["semantic_join_quality"]=="low" else "medium" if join["semantic_join_quality"]!="high" else "low"})
     original=max(0,end-start); removed_ms=sum(b-a for a,b in removed); reason_ms={r:sum(d["end_ms"]-d["start_ms"] for d in decisions if d["action"]=="remove" and d["reason"]==r) for r in REASONS}; protected_ms=sum(max(0,int(u["end_ms"])-int(u["start_ms"])) for u in units if u["semantic_unit_id"] in protected)
-    return {"candidate_id":candidate["candidate_id"],"original_start_ms":start,"original_end_ms":end,"decisions":decisions,"retained_ranges":[{"start_ms":a,"end_ms":b} for a,b in retained],"removed_ranges":[{"start_ms":a,"end_ms":b} for a,b in removed],"protected_ranges":[{"start_ms":u["start_ms"],"end_ms":u["end_ms"],"semantic_unit_id":u["semantic_unit_id"],"reason":"meaning_required"} for u in units if u["semantic_unit_id"] in protected],"estimated_original_duration_ms":original,"estimated_compressed_duration_ms":original-removed_ms,"compression_ratio":round((original-removed_ms)/max(1,original),4),"semantic_integrity_status":"needs_review" if any(d.get("join_risk",{}).get("sentence_join_risk") or d.get("cut_risk")=="high" for d in decisions) else "preserved","confidence":round(sum(d["confidence"] for d in decisions)/len(decisions),4) if decisions else .96,"limitations":["Source media was not rendered; join quality is advisory.","Ambiguous redundancy remains KEEP or OPTIONAL_KEEP."],"metrics":{"original_duration":original,"retained_duration":original-removed_ms,"removed_duration":removed_ms,"compression_ratio":round((original-removed_ms)/max(1,original),4),"filler_removed_ms":reason_ms.get("filler",0),"pause_removed_ms":reason_ms.get("dead_air",0)+reason_ms.get("hesitation",0),"redundancy_removed_ms":reason_ms.get("false_start",0)+reason_ms.get("repeated_phrase",0)+reason_ms.get("redundant_sentence",0),"tangent_removed_ms":reason_ms.get("tangent",0),"internal_cut_count":len(removed),"high_risk_cut_count":sum(d.get("cut_risk")=="high" for d in decisions),"protected_content_ratio":round(protected_ms/max(1,original),4)}}
+    active_removals=[d for d in decisions if d["action"] == "remove"]
+    return {"candidate_id":candidate["candidate_id"],"original_start_ms":start,"original_end_ms":end,"decisions":decisions,"retained_ranges":[{"start_ms":a,"end_ms":b} for a,b in retained],"removed_ranges":[{"start_ms":a,"end_ms":b} for a,b in removed],"protected_ranges":[{"start_ms":u["start_ms"],"end_ms":u["end_ms"],"semantic_unit_id":u["semantic_unit_id"],"reason":"meaning_required"} for u in units if u["semantic_unit_id"] in protected],"estimated_original_duration_ms":original,"estimated_compressed_duration_ms":original-removed_ms,"compression_ratio":round((original-removed_ms)/max(1,original),4),"semantic_integrity_status":"needs_review" if any(d.get("join_risk",{}).get("sentence_join_risk") or d.get("cut_risk")=="high" for d in active_removals) else "preserved","confidence":round(sum(d["confidence"] for d in decisions)/len(decisions),4) if decisions else .96,"limitations":["Source media was not rendered; join quality is advisory.","Ambiguous redundancy remains KEEP or OPTIONAL_KEEP."],"metrics":{"original_duration":original,"retained_duration":original-removed_ms,"removed_duration":removed_ms,"compression_ratio":round((original-removed_ms)/max(1,original),4),"filler_removed_ms":reason_ms.get("filler",0),"pause_removed_ms":reason_ms.get("dead_air",0)+reason_ms.get("hesitation",0),"redundancy_removed_ms":reason_ms.get("false_start",0)+reason_ms.get("repeated_phrase",0)+reason_ms.get("redundant_sentence",0),"tangent_removed_ms":reason_ms.get("tangent",0),"internal_cut_count":len(removed),"high_risk_cut_count":sum(d.get("cut_risk")=="high" for d in active_removals),"protected_content_ratio":round(protected_ms/max(1,original),4)}}
 
 def build_plan(*,candidates,segments,story_semantics,source_editing=None):
     started=time.monotonic(); stories={s.get("story_id"):s for s in story_semantics.get("story_segments") or []}; plans=[_candidate(c,segments,stories.get(c.get("story_id"),story_semantics),source_editing or {}) for c in candidates]; original=sum(p["metrics"]["original_duration"] for p in plans); retained=sum(p["metrics"]["retained_duration"] for p in plans)
-    return {"semantic_compression_version":"semantic-compression-v1","schema_version":SCHEMA_VERSION,"status":"available","candidate_count":len(plans),"candidates":plans,"metrics":{"candidate_count":len(plans),"original_duration":original,"retained_duration":retained,"removed_duration":original-retained,"compression_ratio":round(retained/max(1,original),4),"internal_cut_count":sum(p["metrics"]["internal_cut_count"] for p in plans),"high_risk_cut_count":sum(p["metrics"]["high_risk_cut_count"] for p in plans)},"provenance":{"method":"deterministic-transcript-story-rules-v1","llm_used":False,"runtime_sec":round(time.monotonic()-started,4)},"limitations":["No rendering, crossfades, J/L cuts, or visual cover execution is performed.","Ambiguous redundancy and semantic joins remain KEEP or OPTIONAL_KEEP."]}
+    return {"semantic_compression_version":"semantic-compression-v1.1","schema_version":SCHEMA_VERSION,"status":"available","candidate_count":len(plans),"candidates":plans,"metrics":{"candidate_count":len(plans),"original_duration":original,"retained_duration":retained,"removed_duration":original-retained,"compression_ratio":round(retained/max(1,original),4),"internal_cut_count":sum(p["metrics"]["internal_cut_count"] for p in plans),"high_risk_cut_count":sum(p["metrics"]["high_risk_cut_count"] for p in plans)},"provenance":{"method":"deterministic-transcript-story-rules-v1.1","llm_used":False,"runtime_sec":round(time.monotonic()-started,4)},"limitations":["No rendering, crossfades, J/L cuts, or visual cover execution is performed.","Ambiguous redundancy and semantic joins remain KEEP or OPTIONAL_KEEP."]}
