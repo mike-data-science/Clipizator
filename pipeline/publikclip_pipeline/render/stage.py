@@ -86,12 +86,21 @@ class RenderStage(Stage):
             trajectory = json.loads(Path(traj_path).read_text())
             start, end = clip["start"], clip["end"]
             execution = execution_by_candidate.get(clip.get("candidate_id"))
+            if (execution or {}).get("duration_contract", {}).get("status") == "violation":
+                raise StageError("Configured minimum clip duration could not be preserved safely.")
             visual_join = visual_join_by_candidate.get(clip.get("candidate_id"))
             ranges = [
                 (float(item["start_ms"]) / 1000, float(item["end_ms"]) / 1000)
                 for item in ((visual_join or {}).get("render_retained_ranges") or (execution or {}).get("final_retained_ranges") or [])
             ] or [(start, end)]
             remap = TimeRemap(ranges)
+            contract = clip.get("duration_contract") or {}
+            minimum = contract.get("min_duration_ms")
+            maximum = contract.get("max_duration_ms")
+            if minimum is not None and remap.output_duration * 1000 < float(minimum):
+                raise StageError("Configured minimum clip duration would be violated by edit compression.")
+            if maximum is not None and remap.output_duration * 1000 > float(maximum):
+                raise StageError("Configured maximum clip duration would be violated by rendering.")
             if len(ranges) > 1 or ranges != [(start, end)]:
                 trajectory = {
                     **trajectory,

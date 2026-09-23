@@ -113,3 +113,10 @@ def test_future_persistence_only_fields_round_trip_without_execution():
     assert saved["config"]["broll"]["future_hint"] == "stock-only"
     assert saved["config"]["user_overrides"]["future_renderer"]["grain"] == 0.2
     assert not hasattr(settings, "broll")
+
+
+def test_clip_length_contract_persists_in_the_run_snapshot():
+    job = make_job()
+    generation_config.save_project_config(job.id, {"clip_length": {"min_seconds": 30, "max_seconds": 60}})
+    snapshot = generation_config.snapshot_run(job.id)
+    assert snapshot["resolved_config"]["clip_length"] == {"min_seconds": 30, "max_seconds": 60}

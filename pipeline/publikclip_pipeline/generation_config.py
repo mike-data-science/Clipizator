@@ -125,6 +125,7 @@ def system_default_config() -> dict[str, Any]:
             "profile_defaults": {},
         },
         "transitions": {"mode": "none", "preset_id": None},
+        "clip_length": {"min_seconds": None, "max_seconds": None},
         "user_overrides": {},
     }
 
@@ -197,7 +198,7 @@ def validate_config(value: Any, *, partial: bool = True) -> dict[str, Any]:
     if version != CONFIG_VERSION:
         raise ValueError(f"unsupported config_version {version!r}")
     data["config_version"] = version
-    for key in ("layout", "captions", "title_hook", "broll", "sfx", "music", "camera", "transitions", "user_overrides"):
+    for key in ("layout", "captions", "title_hook", "broll", "sfx", "music", "camera", "transitions", "clip_length", "user_overrides"):
         if key in data and not isinstance(data[key], dict):
             raise ValueError(f"{key} must be an object")
     _enum(data.get("title_hook", {}), "mode", TITLE_MODES, "title_hook")
@@ -217,6 +218,14 @@ def validate_config(value: Any, *, partial: bool = True) -> dict[str, Any]:
         item = data.get(section, {}).get(key)
         if item is not None and not isinstance(item, bool):
             raise ValueError(f"{section}.{key} must be a boolean")
+    clip_length = data.get("clip_length", {})
+    for key in ("min_seconds", "max_seconds"):
+        value = clip_length.get(key)
+        if value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0):
+            raise ValueError(f"clip_length.{key} must be a positive number or null")
+    minimum, maximum = clip_length.get("min_seconds"), clip_length.get("max_seconds")
+    if minimum is not None and maximum is not None and minimum > maximum:
+        raise ValueError("clip_length.min_seconds cannot exceed clip_length.max_seconds")
     if not partial:
         missing = set(system_default_config()) - set(data)
         if missing:

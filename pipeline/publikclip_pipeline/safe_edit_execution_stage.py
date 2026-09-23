@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from .jobs.queue import Stage, StageError
-from .safe_edit_execution import build_execution_plan
+from .safe_edit_execution import build_execution_plan, preserve_duration_contract
 
 
 class SafeEditExecutionStage(Stage):
@@ -38,11 +38,11 @@ class SafeEditExecutionStage(Stage):
                 {"timestamp_ms": (round(float(item["start"]) * 1000) if "start" in item else int(item.get("start_ms", 0)))}
                 for item in editing["shot_cuts"]
             ]}
-        result = build_execution_plan(
+        result = preserve_duration_contract(build_execution_plan(
             semantic_compression=compression, segments=diarize.get("segments") or [],
             source_editing=editing, rms=curves.get("rms") or [],
             rms_grid_sec=float(curves.get("grid_sec") or .1),
             fps=float((ingest.get("probe") or {}).get("fps") or 25),
-        )
+        ), (ctx.generation_config or {}).get("clip_length"))
         (ctx.job_dir / "safe_edit_execution_v1.json").write_text(json.dumps(result, ensure_ascii=False, indent=1))
         return result

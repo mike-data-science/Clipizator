@@ -90,6 +90,7 @@ export interface JobSummary {
   current_stage?: string | null
   stage_progress?: number | null
   completed_stages?: string[]
+  pipeline_stages?: Array<{ id: string; label: string }>
   completed?: boolean
   error?: string | null
   created_at?: number
@@ -127,6 +128,7 @@ export interface SetupState {
 export interface GenerationConfig {
   config_version?: number
   style_profile_id?: string
+  clip_length?: { min_seconds?: number | null; max_seconds?: number | null }
   layout?: {
     preset_id?: string | null
     target_aspect_ratio?: string | null

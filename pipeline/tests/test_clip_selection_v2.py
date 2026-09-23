@@ -128,6 +128,23 @@ def test_scores_do_not_veto_semantic_shock_for_low_arousal_or_require_laughter()
     assert "laughter" not in features  # humor/reaction needs no acoustic veto in v2
 
 
+def test_explicit_duration_contract_prefers_fewer_valid_candidates_without_padding():
+    valid = {"candidate_id": "valid", "story_id": "a", "semantic_unit_ids": ["a"], "start_ms": 0, "end_ms": 35_000, "score": 90, "quality_bucket": "strong", "related_candidates": []}
+    short = {"candidate_id": "short", "story_id": "b", "semantic_unit_ids": ["b"], "start_ms": 40_000, "end_ms": 46_000, "score": 99, "quality_bucket": "exceptional", "related_candidates": []}
+    selected, rejected = select_portfolio([short, valid], min_duration_ms=30_000)
+    assert [item["candidate_id"] for item in selected] == ["valid"]
+    assert rejected[0]["rejection_reason"] == "below_configured_minimum_duration"
+
+
+def test_explicit_duration_contract_is_attached_to_selection():
+    result = build_selection(
+        story_semantics=_story_fixture(), source_editing={},
+        clip_length={"min_seconds": 30, "max_seconds": 60},
+    )
+    assert result["duration_contract"] == {"min_duration_ms": 30_000, "max_duration_ms": 60_000}
+    assert result["portfolio"] == []
+
+
 def test_score_separation_produces_distinct_quality_buckets():
     strong = {key: .9 for key in (
         "moment_strength", "hook_strength", "payoff_strength", "insight_strength",

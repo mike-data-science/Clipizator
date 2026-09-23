@@ -284,3 +284,29 @@ def build_execution_plan(
         "policy": policy.__dict__,
         "provenance": {"method": "deterministic-safe-boundary-rules-v1", "llm_used": False, "media_decode_used": False},
     }
+
+
+def preserve_duration_contract(plan: dict[str, Any], clip_length: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep safe internal trims from silently breaking an explicit minimum."""
+    minimum = (clip_length or {}).get("min_seconds")
+    if minimum is None:
+        return plan
+    minimum_ms = int(float(minimum) * 1000)
+    for candidate in plan.get("candidates") or []:
+        if int(candidate.get("final_duration_ms") or 0) >= minimum_ms:
+            candidate["duration_contract"] = {"min_duration_ms": minimum_ms, "status": "satisfied"}
+            continue
+        source = candidate.get("source_range") or {}
+        start, end = int(source.get("start_ms") or 0), int(source.get("end_ms") or 0)
+        if end - start < minimum_ms:
+            candidate["duration_contract"] = {"min_duration_ms": minimum_ms, "status": "violation"}
+            continue
+        candidate["final_retained_ranges"] = [{"start_ms": start, "end_ms": end}]
+        candidate["final_duration_ms"] = end - start
+        candidate["time_saved_ms"] = 0
+        candidate["executed_removals"] = []
+        candidate["internal_cut_count"] = 0
+        candidate["execution_status"] = "duration_contract_preserved_source_continuous"
+        candidate.setdefault("warnings", []).append("compression_bypassed_to_preserve_configured_minimum_duration")
+        candidate["duration_contract"] = {"min_duration_ms": minimum_ms, "status": "preserved_source_continuous"}
+    return plan

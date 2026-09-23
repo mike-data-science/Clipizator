@@ -7,6 +7,24 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
+# This is the normal clipping plan in backend.server._stages().  Keep the
+# progress representation next to the lifecycle derivation so every UI gets
+# the same complete, ordered pipeline rather than maintaining its own subset.
+PIPELINE_STAGES = (
+    ("ingest", "Ingest"),
+    ("asr", "ASR / Transcription"),
+    ("diarize", "Diarization"),
+    ("events", "Audio / Events"),
+    ("source_analysis", "Source analysis"),
+    ("candidates", "Finding moments"),
+    ("semantic_compression", "Refining moments"),
+    ("safe_edit_execution", "Preparing edits"),
+    ("score", "Scoring"),
+    ("camera", "Camera / Editing"),
+    ("render", "Rendering"),
+)
+
+
 def _read_json(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(errors="replace"))
@@ -137,7 +155,7 @@ def _effective_status(job, stage_runs: list[dict], clip_count: int) -> str:
 
 
 def _lifecycle(job, status: str, stage_runs: list[dict]) -> tuple[str | None, list[str]]:
-    pipeline_stages = ("ingest", "asr", "diarize", "events", "candidates", "semantic_compression", "score", "camera", "render")
+    pipeline_stages = tuple(stage_id for stage_id, _ in PIPELINE_STAGES)
     completed = {row["stage"] for row in stage_runs if row.get("status") == "done"}
     completed.update(stage for stage in pipeline_stages if (job.dir / f"{stage}.json").is_file())
     if status in {"waiting_for_worker", "downloading", "uploading"}:
@@ -201,6 +219,7 @@ def list_project_jobs(
             "current_stage": current_stage,
             "stage_progress": 1.0 if status == "done" else None,
             "completed_stages": completed_stages,
+            "pipeline_stages": [{"id": stage_id, "label": label} for stage_id, label in PIPELINE_STAGES],
             "error": job.error,
             "created_at": job.created_at,
         })
@@ -221,7 +240,7 @@ def duplicate_groups(jobs, summaries: dict[str, dict]) -> dict[str, dict]:
             continue
         def rank(job):
             summary = summaries.get(job.id, {})
-            artifacts = sum((job.dir / f"{stage}.json").is_file() for stage in ("ingest", "asr", "diarize", "events", "candidates", "semantic_compression", "score", "camera", "render"))
+            artifacts = sum((job.dir / f"{stage}.json").is_file() for stage, _ in PIPELINE_STAGES)
             return (bool(summary.get("completed")), bool(summary.get("rendered")), artifacts, job.created_at)
         preferred = max(members, key=rank)
         member_ids = sorted((job.id for job in members), reverse=True)

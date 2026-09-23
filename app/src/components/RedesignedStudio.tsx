@@ -216,23 +216,12 @@ function qualityBadge(job: JobSummary): string {
   if (d > 600) return 'HD';
   return 'SD';
 }
-const PROJECT_STAGES = [
-  ['worker_queued', 'Waiting for local downloader'],
-  ['downloading', 'Downloading'],
-  ['uploading', 'Uploading'],
-  ['ingest', 'Ingest'],
-  ['asr', 'Transcription'],
-  ['diarize', 'Diarization'],
-  ['events', 'Audio / Events'],
-  ['candidates', 'Finding moments'],
-  ['score', 'Scoring'],
-  ['camera', 'Editing / Camera'],
-  ['render', 'Rendering'],
-] as const
-
-function stageLabel(stage?: string | null) {
+function stageLabel(stage?: string | null, pipelineStages: Array<{ id: string; label: string }> = []) {
   if (stage === 'complete') return 'Complete'
-  return PROJECT_STAGES.find(([id]) => id === stage)?.[1] || stage || 'Waiting to start'
+  if (stage === 'worker_queued') return 'Waiting for local downloader'
+  if (stage === 'downloading') return 'Downloading'
+  if (stage === 'uploading') return 'Uploading source'
+  return pipelineStages.find((item) => item.id === stage)?.label || stage || 'Waiting to start'
 }
 
 function ProjectGrid({ jobs, onOpenJob, stages, activeJobId, activeStage: liveStageName, selecting = false, selectedIds = new Set<string>(), onToggle, large = false }: { jobs: JobSummary[], onOpenJob: (id: string) => void, stages: Record<string, { fraction: number; message: string }>, activeJobId: string | null, activeStage: string | null, selecting?: boolean, selectedIds?: Set<string>, onToggle?: (id: string) => void, large?: boolean }) {
@@ -241,6 +230,7 @@ function ProjectGrid({ jobs, onOpenJob, stages, activeJobId, activeStage: liveSt
     const quality = qualityBadge(job);
     const qColor = quality === '4K' ? '#a855f7' : quality === 'HD' ? '#10b981' : '#6b7280';
     const activeStage = job.id === activeJobId && liveStageName ? liveStageName : job.current_stage;
+    const pipelineStages = job.pipeline_stages || [];
     const liveStage = job.id === activeJobId && activeStage ? stages[activeStage] : undefined;
     const activeFraction = liveStage?.fraction ?? job.stage_progress;
     const completedStages = new Set(job.completed_stages || []);
@@ -268,13 +258,13 @@ function ProjectGrid({ jobs, onOpenJob, stages, activeJobId, activeStage: liveSt
       <div className="project-info" style={{ padding:'8px 10px 10px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
         <span style={{ fontSize:'10px', color: statusColor, fontWeight:600, display:'flex', alignItems:'center', gap:'4px' }}>
           <span style={{ width:'6px', height:'6px', borderRadius:'50%', background: statusColor, display:'inline-block' }} />
-          {isComplete ? 'Completed' : isFailed ? `Failed · ${stageLabel(activeStage)}` : stageLabel(activeStage)}
+          {isComplete ? 'Completed' : isFailed ? `Failed · ${stageLabel(activeStage, pipelineStages)}` : stageLabel(activeStage, pipelineStages)}
         </span>
         {isComplete && <span style={{ fontSize:'10px', color:'#9a9ba4' }}>{job.clip_count} clips</span>}
       </div>
       {isActive && <div style={{ padding:'0 10px 10px', textAlign:'left' }}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:'10px', color:'#6c4df6', marginBottom:'6px' }}><span>{liveStage?.message || stageLabel(activeStage)}</span>{typeof activeFraction === 'number' && activeFraction >= 0 && <b>{Math.round(activeFraction * 100)}%</b>}</div>
-        <div style={{ display:'flex', gap:'3px', flexWrap:'wrap' }}>{PROJECT_STAGES.map(([id, label]) => <span key={id} title={label} style={{ width:'7px', height:'7px', borderRadius:'50%', background: completedStages.has(id) ? '#10b981' : activeStage === id ? '#6c4df6' : '#e4e3ea' }} />)}</div>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:'10px', color:'#6c4df6', marginBottom:'6px' }}><span>{liveStage?.message || stageLabel(activeStage, pipelineStages)}</span>{typeof activeFraction === 'number' && activeFraction >= 0 && <b>{Math.round(activeFraction * 100)}%</b>}</div>
+        <div style={{ display:'flex', gap:'3px', flexWrap:'wrap' }}>{pipelineStages.map(({ id, label }) => <span key={id} title={label} style={{ width:'7px', height:'7px', borderRadius:'50%', background: completedStages.has(id) ? '#10b981' : activeStage === id ? '#6c4df6' : '#e4e3ea' }} />)}</div>
       </div>}
       {isFailed && job.error && <div style={{ padding:'0 10px 10px', color:'#be123c', fontSize:'10px', textAlign:'left', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{job.error}</div>}
     </button>

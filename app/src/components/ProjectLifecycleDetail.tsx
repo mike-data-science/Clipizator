@@ -1,13 +1,13 @@
-import type { JobResults, ProjectLifecycle } from '../types'
+import { useEffect } from 'react'
+import type { ProjectLifecycle } from '../types'
 
 interface Props {
   lifecycle: ProjectLifecycle
-  results: JobResults | null
   activeJobId: string | null
   activeStage: string | null
   liveStages: Record<string, { fraction: number; message: string }>
   onBack: () => void
-  onViewClips: () => void
+  onCompleted: () => void
   onDelete: () => Promise<void>
 }
 
@@ -25,7 +25,7 @@ function formatRuntime(seconds?: number | null) {
   return seconds < 60 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds / 60)}m`
 }
 
-export default function ProjectLifecycleDetail({ lifecycle, results, activeJobId, activeStage, liveStages, onBack, onViewClips, onDelete }: Props) {
+export default function ProjectLifecycleDetail({ lifecycle, activeJobId, activeStage, liveStages, onBack, onCompleted, onDelete }: Props) {
   const liveStageId = activeStage === 'worker_queued' ? 'source' : activeStage
   const stages = lifecycle.stages.map((stage) => {
     if (activeJobId !== lifecycle.job_id || !liveStageId || stage.id !== liveStageId) return stage
@@ -34,6 +34,7 @@ export default function ProjectLifecycleDetail({ lifecycle, results, activeJobId
   })
   const isComplete = lifecycle.status === 'done' || lifecycle.rendered
   const status = isComplete ? 'done' : lifecycle.status
+  useEffect(() => { if (isComplete) onCompleted() }, [isComplete, onCompleted])
   const live = activeJobId === lifecycle.job_id && activeStage ? liveStages[activeStage] : undefined
   const overallProgress = status === 'done' ? 1 : live?.fraction != null && live.fraction >= 0 ? live.fraction : lifecycle.progress
 
@@ -47,7 +48,7 @@ export default function ProjectLifecycleDetail({ lifecycle, results, activeJobId
     {overallProgress != null && overallProgress >= 0 && status !== 'done' && <div style={{ height: '6px', background: '#eceaf5', borderRadius: '4px', marginBottom: '22px' }}><div style={{ height: '100%', width: `${Math.min(100, overallProgress * 100)}%`, background: '#6c4df6', borderRadius: '4px' }} /></div>}
     {lifecycle.error && status === 'failed' && <div role="alert" style={{ padding: '12px 14px', borderRadius: '9px', background: '#fff1f2', color: '#be123c', marginBottom: '18px', fontSize: '13px' }}>{lifecycle.error}</div>}
     <section style={{ background: '#fff', border: '1px solid #e4e3ea', borderRadius: '14px', padding: '20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}><h2 style={{ margin: 0, fontSize: '17px' }}>Pipeline</h2><div style={{ display: 'flex', gap: '8px' }}>{status === 'done' && results?.render?.outputs?.length && <button className="new-primary" onClick={onViewClips}>View clips</button>}<button className="new-secondary" onClick={() => { if (confirm(`Delete project "${lifecycle.title || 'Untitled project'}" (${lifecycle.job_id})? This cannot be undone.`)) void onDelete().catch((error: unknown) => alert(error instanceof Error ? error.message : 'Could not delete project.')) }}>Delete</button></div></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}><h2 style={{ margin: 0, fontSize: '17px' }}>Pipeline</h2><div style={{ display: 'flex', gap: '8px' }}><button className="new-secondary" onClick={() => { if (confirm(`Delete project "${lifecycle.title || 'Untitled project'}" (${lifecycle.job_id})? This cannot be undone.`)) void onDelete().catch((error: unknown) => alert(error instanceof Error ? error.message : 'Could not delete project.')) }}>Delete</button></div></div>
       <div style={{ display: 'grid', gap: '9px' }}>{stages.map((stage) => {
         const active = stage.state === 'active'
         const failed = stage.state === 'failed'

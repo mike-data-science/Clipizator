@@ -458,9 +458,9 @@ def job_results(job_id: str):
 def job_lifecycle(job_id: str):
     """Return the existing job/stage bookkeeping for lifecycle detail UI."""
     try:
-        from backend.studio_jobs import list_project_jobs
+        from backend.studio_jobs import PIPELINE_STAGES, list_project_jobs
     except ModuleNotFoundError:
-        from studio_jobs import list_project_jobs
+        from studio_jobs import PIPELINE_STAGES, list_project_jobs
     job = queue.get_job(job_id)
     if not job or getattr(job, "job_mode", "clipping") == "research":
         raise HTTPException(404, "normal project not found")
@@ -471,9 +471,6 @@ def job_lifecycle(job_id: str):
         ).fetchall()]
     summary = list_project_jobs([job], stage_runs_by_job={job_id: rows})[0]
     by_stage = {row["stage"]: row for row in rows}
-    stages = [("ingest", "Ingest"), ("asr", "ASR / Transcription"), ("diarize", "Diarization"),
-              ("events", "Audio / Events"), ("candidates", "Finding moments"), ("score", "Scoring"),
-              ("camera", "Camera / Editing"), ("render", "Render")]
     if summary["status"] in {"waiting_for_worker", "downloading", "uploading"}:
         source_state = "active"
         source_label = {
@@ -485,7 +482,7 @@ def job_lifecycle(job_id: str):
         source_state = "completed" if summary["ingested"] else "waiting"
         source_label = "Source"
     detail_stages = [{"id": "source", "label": source_label, "state": source_state, "progress": None, "message": source_label}]
-    for stage_id, label in stages:
+    for stage_id, label in PIPELINE_STAGES:
         row = by_stage.get(stage_id)
         checkpointed = (job.dir / f"{stage_id}.json").is_file()
         state = "waiting"

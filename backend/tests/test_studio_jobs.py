@@ -1,7 +1,7 @@
 import json
 from types import SimpleNamespace
 
-from backend.studio_jobs import duplicate_groups, list_project_jobs
+from backend.studio_jobs import PIPELINE_STAGES, duplicate_groups, list_project_jobs
 
 
 def job(tmp_path, name, title="media", source="https://youtube.com/watch?v=abc", status="pending", job_mode="clipping"):
@@ -87,6 +87,23 @@ def test_research_jobs_are_not_projects_and_stage_state_is_exposed(tmp_path):
     assert result[0]["current_stage"] == "ingest"
     assert result[0]["error"] == "ingest failed"
     assert result[1]["current_stage"] == "worker_queued"
+
+
+def test_pipeline_stages_include_every_current_processing_stage(tmp_path):
+    item = job(tmp_path, "01", status="running")
+    checkpoint(item, "events", {})
+    summary = list_project_jobs([item], stage_runs_by_job={
+        item.id: [{"stage": "source_analysis", "status": "running"}],
+    })[0]
+    assert summary["current_stage"] == "source_analysis"
+    assert summary["completed_stages"] == ["events"]
+    assert summary["pipeline_stages"] == [
+        {"id": stage_id, "label": label} for stage_id, label in PIPELINE_STAGES
+    ]
+    assert [stage[0] for stage in PIPELINE_STAGES] == [
+        "ingest", "asr", "diarize", "events", "source_analysis", "candidates",
+        "semantic_compression", "safe_edit_execution", "score", "camera", "render",
+    ]
 
 
 def test_legacy_rendered_project_is_completed_without_modern_status_records(tmp_path):

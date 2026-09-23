@@ -56,3 +56,6 @@ def test_projects_api_keeps_lifecycle_jobs_and_excludes_research():
     detail_stages = {stage["id"]: stage for stage in detail.json()["stages"]}
     assert detail.json()["current_stage"] == "asr"
     assert detail_stages["asr"]["state"] == "active"
+    assert detail_stages["source_analysis"]["label"] == "Source analysis"
+    assert detail_stages["semantic_compression"]["state"] == "waiting"
+    assert detail_stages["safe_edit_execution"]["state"] == "waiting"

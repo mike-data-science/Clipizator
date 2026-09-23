@@ -30,7 +30,7 @@ def detect_scenes(media_path: str, progress=None) -> list[float]:
 
 class CandidatesStage(Stage):
     name = "candidates"
-    schema_version = 2
+    schema_version = 3
 
     def run(self, ctx: StageContext) -> dict:
         import numpy as np
@@ -106,6 +106,7 @@ class CandidatesStage(Stage):
                 story_semantics=story_semantics, source_editing=source_editing,
                 rms=[float(item) for item in curves.get("rms") or []],
                 grid_sec=float(curves.get("grid_sec") or .1),
+                clip_length=(ctx.generation_config or {}).get("clip_length"),
             )
             if selection is not None:
                 compact_debug = debug_artifact(selection)
@@ -120,6 +121,7 @@ class CandidatesStage(Stage):
                     "broad_candidate_count": selection["broad_candidate_count"],
                     "post_dedupe_count": selection["post_dedupe_count"],
                     "final_count": selection["final_count"],
+                    "duration_contract": selection["duration_contract"],
                     "quality_bucket_counts": selection["quality_bucket_counts"],
                     "effective_weights": effective_weights, "scene_count": len(scene_times),
                     "scene_detector_outcome": scene_detector_outcome,

@@ -1,6 +1,6 @@
 import json
 
-from publikclip_pipeline.safe_edit_execution import ExecutionPolicy, build_execution_plan
+from publikclip_pipeline.safe_edit_execution import ExecutionPolicy, build_execution_plan, preserve_duration_contract
 
 
 def decision(decision_id, start, end, *, action="remove", reason="false_start", cut_risk="low", audio="low", visual="low"):
@@ -50,6 +50,14 @@ def test_safe_remove_executes_and_constructs_retained_ranges():
     assert [(r["start_ms"], r["end_ms"]) for r in result["final_retained_ranges"]] == [(0, cut["refined_left_boundary_ms"]), (cut["refined_right_boundary_ms"], 5000)]
     assert result["time_saved_ms"] == cut["refined_right_boundary_ms"] - cut["refined_left_boundary_ms"]
     assert result["execution_status"] == "auto_safe"
+
+
+def test_duration_contract_restores_continuous_source_when_compression_is_too_short():
+    result = plan([decision("d1", 1000, 5000)], start=0, end=32_000)
+    protected = preserve_duration_contract({"candidates": [result]}, {"min_seconds": 30, "max_seconds": 60})["candidates"][0]
+    assert protected["final_duration_ms"] == 32_000
+    assert protected["final_retained_ranges"] == [{"start_ms": 0, "end_ms": 32_000}]
+    assert protected["execution_status"] == "duration_contract_preserved_source_continuous"
 
 
 def test_multiple_safe_removals_are_ordered_without_overlap():

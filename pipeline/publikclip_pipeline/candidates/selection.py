@@ -33,6 +33,16 @@ def _stable_id(prefix: str, identity: str) -> str:
     return f"{prefix}_{hashlib.sha1(identity.encode('utf-8')).hexdigest()[:12]}"
 
 
+def duration_contract(value: dict[str, Any] | None = None) -> dict[str, int | None]:
+    value = value or {}
+    minimum = value.get("min_seconds")
+    maximum = value.get("max_seconds")
+    return {
+        "min_duration_ms": int(float(minimum) * 1000) if minimum is not None else None,
+        "max_duration_ms": int(float(maximum) * 1000) if maximum is not None else MAX_CANDIDATE_DURATION_MS,
+    }
+
+
 def _words(value: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", value.casefold())
 
@@ -151,7 +161,7 @@ def _candidate(
     *, story: dict[str, Any], chosen_ids: list[str], units_by_id: dict[str, dict[str, Any]],
     story_units: list[dict[str, Any]], hooks_by_unit: dict[str, list[dict[str, Any]]],
     signals: list[dict[str, Any]], payoff: dict[str, Any] | None, origin: str,
-    source_editing: dict[str, Any], rms: list[float], grid_sec: float, story_count_early: int,
+    source_editing: dict[str, Any], rms: list[float], grid_sec: float, story_count_early: int, max_duration_ms: int | None,
 ) -> dict[str, Any] | None:
     positions = {item["semantic_unit_id"]: index for index, item in enumerate(story_units)}
     selected = [units_by_id[item] for item in chosen_ids if item in units_by_id and item in positions]
@@ -160,7 +170,7 @@ def _candidate(
     first_index, last_index = min(positions[item["semantic_unit_id"]] for item in selected), max(positions[item["semantic_unit_id"]] for item in selected)
     interval_units = story_units[first_index:last_index + 1]
     start_ms, end_ms = interval_units[0]["start_ms"], interval_units[-1]["end_ms"]
-    if end_ms <= start_ms or end_ms - start_ms > MAX_CANDIDATE_DURATION_MS:
+    if end_ms <= start_ms or (max_duration_ms is not None and end_ms - start_ms > max_duration_ms):
         return None
     transcript = " ".join(item.get("transcript") or "" for item in interval_units).strip()
     if len(_words(transcript)) < 4:
@@ -335,11 +345,15 @@ def deduplicate(candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
     return kept, rejected
 
 
-def select_portfolio(candidates: list[dict[str, Any]], maximum: int = MAX_FINALISTS) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def select_portfolio(candidates: list[dict[str, Any]], maximum: int = MAX_FINALISTS, min_duration_ms: int | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     selected: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     story_counts: dict[str, int] = {}
     for candidate in sorted(candidates, key=lambda item: (-item["score"], item["start_ms"])):
+        if min_duration_ms is not None and candidate["end_ms"] - candidate["start_ms"] < min_duration_ms:
+            candidate["rejection_reason"] = "below_configured_minimum_duration"
+            rejected.append(candidate)
+            continue
         if candidate["quality_bucket"] == "weak":
             candidate["rejection_reason"] = "below_usable_quality"
             rejected.append(candidate)
@@ -361,7 +375,9 @@ def select_portfolio(candidates: list[dict[str, Any]], maximum: int = MAX_FINALI
 def build_selection(
     *, story_semantics: dict[str, Any], source_editing: dict[str, Any],
     rms: list[float] | None = None, grid_sec: float = .1, maximum: int = MAX_FINALISTS,
+    clip_length: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    contract = duration_contract(clip_length)
     units = story_semantics.get("semantic_units") or []
     stories = story_semantics.get("story_segments") or []
     if not units or not stories:
@@ -385,9 +401,10 @@ def build_selection(
                 story=story, chosen_ids=chosen, units_by_id=units_by_id, story_units=story_units,
                 hooks_by_unit=hooks_by_unit, signals=signals, payoff=payoff, origin=origin,
                 source_editing=source_editing, rms=rms or [], grid_sec=grid_sec,
-                story_count_early=story_count_early,
+                story_count_early=story_count_early, max_duration_ms=contract["max_duration_ms"],
             )
             if candidate:
+                candidate["duration_contract"] = contract.copy()
                 if story_index + 1 < len(stories):
                     candidate["next_topic_boundary_ms"] = stories[story_index + 1]["start_ms"]
                 broad.append(candidate)
@@ -404,13 +421,13 @@ def build_selection(
             unique[item["candidate_id"]] = item
     broad = list(unique.values())
     deduped, duplicate_rejections = deduplicate(broad)
-    selected, diversity_rejections = select_portfolio(deduped, maximum=maximum)
+    selected, diversity_rejections = select_portfolio(deduped, maximum=maximum, min_duration_ms=contract["min_duration_ms"])
     buckets = {name: sum(item["quality_bucket"] == name for item in deduped) for name in ("exceptional", "strong", "usable", "weak")}
     return {
         "schema_version": 2, "selection_version": "clip-selection-v2",
         "status": "available", "broad_candidate_count": len(broad),
         "post_dedupe_count": len(deduped), "final_count": len(selected),
-        "quality_bucket_counts": buckets, "candidates": deduped,
+        "quality_bucket_counts": buckets, "duration_contract": contract, "candidates": deduped,
         "portfolio": selected,
         "rejected_high_ranking": sorted([*duplicate_rejections, *diversity_rejections], key=lambda item: -item["score"])[:24],
         "provenance": {

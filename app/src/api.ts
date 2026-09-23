@@ -127,7 +127,6 @@ export const api = {
   saveGeminiKey: (key: string) => post<boolean>('/settings/gemini-key', { key }),
   savePexelsKey: (key: string) => post<boolean>('/settings/pexels-key', { key }),
   setupState: () => get<SetupState>('/setup'),
-  markOnboarded: () => post<void>('/setup/onboard'),
   checkOllama: () => get<{ running: boolean; models: string[] }>('/ollama/status'),
   listAnalyzerVideos: () => get<AnalyzerVideoSummary[]>('/analyzer/videos'),
   analyzerVideo: (jobId: string) => get<AnalyzerVideoDetail>(`/analyzer/videos/${encodeURIComponent(jobId)}`),
