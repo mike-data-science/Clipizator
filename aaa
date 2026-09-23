@@ -1,7 +1,13 @@
+
+
 cd ..
- source venv/bin/activate
+ source .venv/bin/activate
  uvicorn backend.server:app --host 0.0.0.0 --port 8000
 
  python laptop_worker.py --server-url http://127.0.0.1:8001
 
- ssh -N -L 1080:localhost:5173 -L 8001:localhost:8000 Mike@4.231.114.220
+ssh -i C:\Users\Mike\Desktop\clipozaurVm_key.pem -N -L 1080:localhost:5173 -L 8001:localhost:8000 azureuser@158.158.8.113
+
+
+ssh -i C:\Users\Mike\Desktop\clipozaurVm_key.pem azureuser@158.158.8.113
+cd Desktop/Clipizator
